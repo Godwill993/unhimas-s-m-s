@@ -178,6 +178,16 @@ CREATE TABLE announcements (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE TABLE audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    table_name TEXT NOT NULL,
+    record_id UUID,
+    action TEXT NOT NULL, -- 'INSERT', 'UPDATE', 'DELETE'
+    performed_by UUID REFERENCES user_profiles(id),
+    payload JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- ==========================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- ==========================================
@@ -200,6 +210,7 @@ ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE resources ENABLE ROW LEVEL SECURITY;
 ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
 CREATE OR REPLACE FUNCTION auth.role() RETURNS text AS $$
   SELECT role::text FROM public.user_profiles WHERE id = auth.uid();
@@ -227,6 +238,7 @@ CREATE POLICY "Admin All" ON invoices FOR ALL USING (is_admin());
 CREATE POLICY "Admin All" ON payments FOR ALL USING (is_admin());
 CREATE POLICY "Admin All" ON resources FOR ALL USING (is_admin());
 CREATE POLICY "Admin All" ON announcements FOR ALL USING (is_admin());
+CREATE POLICY "Admin All" ON audit_logs FOR ALL USING (is_admin());
 
 CREATE POLICY "Read Academic Structure" ON faculties FOR SELECT USING (true);
 CREATE POLICY "Read Academic Structure" ON departments FOR SELECT USING (true);

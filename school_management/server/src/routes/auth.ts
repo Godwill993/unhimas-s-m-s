@@ -6,42 +6,82 @@ export const authRouter = Router();
 
 /**
  * POST /api/auth/login
- * Body: { email, password }
+ * Body: { identifier, email, password }
+ * Accepts either:
+ * - 'identifier' (matricule like UNH25-CS-0001 or email)
+ * - or 'email'
  */
 authRouter.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const rawIdentifier = (req.body.identifier || req.body.email || req.body.matricule || '').trim();
+    const password = req.body.password;
 
-    if (!email || !password) {
-      res.status(400).json({ error: 'Email and password are required' });
+    if (!rawIdentifier || !password) {
+      res.status(400).json({ error: 'Matricule/Email and password are required' });
       return;
+    }
+
+    let authEmail = rawIdentifier;
+
+    // If identifier doesn't contain '@', it's a student matricule
+    if (!rawIdentifier.includes('@')) {
+      const normalizedMatricule = rawIdentifier.toUpperCase();
+      // Look up student by matricule to obtain synthetic email or account ID
+      const { data: student } = await supabaseAdmin
+        .from('students')
+        .select('id, matricule')
+        .ilike('matricule', normalizedMatricule)
+        .maybeSingle();
+
+      if (student) {
+        // Fetch user profile email
+        const { data: prof } = await supabaseAdmin
+          .from('user_profiles')
+          .select('email')
+          .eq('id', student.id)
+          .maybeSingle();
+        if (prof?.email) {
+          authEmail = prof.email;
+        } else {
+          authEmail = `${normalizedMatricule.toLowerCase()}@unhimas.local`;
+        }
+      } else {
+        // Default standard synthetic email format
+        authEmail = `${normalizedMatricule.toLowerCase()}@unhimas.local`;
+      }
     }
 
     const { data, error } = await supabaseAdmin.auth.signInWithPassword({
-      email,
+      email: authEmail,
       password,
     });
 
-    if (error) {
-      res.status(401).json({ error: 'Invalid email or password' });
+    if (error || !data.user) {
+      res.status(401).json({ error: 'Invalid credentials. Please check your matricule/email and password.' });
       return;
     }
 
-    // Fetch profile
+    // Fetch profile from user_profiles
     const { data: profile, error: profileError } = await supabaseAdmin
-      .from('profiles')
+      .from('user_profiles')
       .select('*')
       .eq('id', data.user.id)
-      .single();
+      .maybeSingle();
 
     if (profileError || !profile) {
-      res.status(401).json({ error: 'User profile not found' });
+      res.status(401).json({ error: 'User profile not found. Contact administrator.' });
       return;
     }
 
-    if (!profile.active) {
-      res.status(403).json({ error: 'Account has been deactivated' });
-      return;
+    // If student, fetch student details
+    let studentInfo = null;
+    if (profile.role === 'student') {
+      const { data: st } = await supabaseAdmin
+        .from('students')
+        .select('matricule, level, program_id, entry_year')
+        .eq('id', profile.id)
+        .maybeSingle();
+      studentInfo = st;
     }
 
     res.json({
@@ -50,6 +90,8 @@ authRouter.post('/login', async (req, res) => {
         email: data.user.email,
         full_name: profile.full_name,
         role: profile.role,
+        matricule: studentInfo?.matricule,
+        student: studentInfo,
       },
       session: {
         access_token: data.session.access_token,
@@ -59,7 +101,7 @@ authRouter.post('/login', async (req, res) => {
     });
   } catch (err) {
     console.error('Login error:', err);
-    res.status(500).json({ error: 'Login failed' });
+    res.status(500).json({ error: 'Login failed due to an internal server error' });
   }
 });
 
