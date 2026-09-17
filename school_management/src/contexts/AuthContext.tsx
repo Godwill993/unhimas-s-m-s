@@ -6,7 +6,7 @@ interface AuthContextType {
   user: UserProfile | null;
   token: string | null;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<UserProfile>;
+  login: (identifier: string, password: string) => Promise<UserProfile>;
   logout: () => void;
 }
 
@@ -41,8 +41,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     verifyAuth();
   }, []);
 
-  const login = async (email: string, password: string): Promise<UserProfile> => {
-    const res = await api.post('/auth/login', { email, password });
+  const login = async (identifier: string, password: string): Promise<UserProfile> => {
+    const res = await api.post('/auth/login', { identifier, password });
     const { user: userProfile, session } = res.data;
 
     setUser(userProfile);
