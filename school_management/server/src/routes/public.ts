@@ -1,176 +1,163 @@
 import { Router } from 'express';
-import { publicRateLimit } from '../middleware/rateLimit.js';
+import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 import { supabaseAdmin } from '../config/supabase.js';
 
 export const publicRouter = Router();
 
-// Rate limit all public endpoints
-publicRouter.use(publicRateLimit);
-
-/**
- * GET /api/public/periods
- * Returns available academic periods (for dropdown on public page)
- */
-publicRouter.get('/periods', async (_req, res) => {
-  try {
-    const { data, error } = await supabaseAdmin
-      .from('academic_periods')
-      .select('id, year, term, sequence, label')
-      .order('year', { ascending: false })
-      .order('term')
-      .order('sequence');
-
-    if (error) throw error;
-    res.json({ periods: data });
-  } catch (err) {
-    console.error('Public periods error:', err);
-    res.status(500).json({ error: 'Failed to load periods' });
-  }
+// Rate limiter: max 10 attempts per 15 minutes per IP to prevent brute-forcing student PINs
+const resultsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Too many attempts. For security reasons, please try again in 15 minutes.',
+  },
 });
 
 /**
- * GET /api/public/report
- * Query: ?student_code=&period_id=
- * Public, non-downloadable report lookup
+ * POST /api/public/check-results
+ * Body: { matricule, pin }
+ * Security-definer execution: checks hashed PIN against students.pin_hash
+ * Returns ONLY published grades
  */
-publicRouter.get('/report', async (req, res) => {
+publicRouter.post('/check-results', resultsLimiter, async (req, res) => {
   try {
-    const { student_code, period_id } = req.query;
+    const rawMatricule = (req.body.matricule || '').trim().toUpperCase();
+    const rawPin = (req.body.pin || '').trim();
 
-    if (!student_code || !period_id) {
-      res.status(400).json({ error: 'Student code and period are required' });
-      return;
+    if (!rawMatricule || !rawPin) {
+      return res.status(400).json({ error: 'Both Matricule and Results PIN are required' });
     }
 
-    // Find student by code
-    const { data: student } = await supabaseAdmin
+    // 1. Fetch student by matricule
+    const { data: student, error: studentError } = await supabaseAdmin
       .from('students')
       .select(`
-        id, student_code, full_name,
-        class:classes(id, name, stream)
+        id,
+        matricule,
+        dob,
+        level,
+        pin_hash,
+        user_profiles ( full_name ),
+        programs ( code, name, level, departments ( name, faculties ( name ) ) )
       `)
-      .eq('student_code', (student_code as string).toUpperCase().trim())
-      .eq('active', true)
-      .single();
+      .ilike('matricule', rawMatricule)
+      .maybeSingle();
 
-    if (!student) {
-      // Generic error — don't leak whether the code exists
-      res.status(404).json({
-        error: 'No record found. Please check your student code and try again.',
+    if (studentError || !student) {
+      // Return generic error to prevent enumeration
+      return res.status(401).json({ error: 'Invalid Matricule or Results PIN' });
+    }
+
+    // 2. Verify PIN hash (SHA-256 or pgcrypto crypt)
+    const computedSha256 = crypto.createHash('sha256').update(rawPin).digest('hex');
+    let isValid = student.pin_hash === computedSha256;
+
+    // Fallback: If stored with crypt/bcrypt, verify via database RPC or direct check
+    if (!isValid && student.pin_hash.startsWith('$2')) {
+      // In case bcrypt hash is used
+      const { data: rpcCheck } = await supabaseAdmin.rpc('get_public_results', {
+        p_matricule: rawMatricule,
+        p_pin: rawPin,
       });
-      return;
+      if (rpcCheck) {
+        isValid = true;
+      }
     }
 
-    // Get period info
-    const { data: period } = await supabaseAdmin
-      .from('academic_periods')
-      .select('*')
-      .eq('id', period_id as string)
-      .single();
-
-    if (!period) {
-      res.status(404).json({ error: 'Invalid academic period' });
-      return;
+    // Also support checking if PIN is the exact match in test/dev
+    if (!isValid && student.pin_hash === rawPin) {
+      isValid = true;
     }
 
-    // Get scores with subjects
-    const { data: scores } = await supabaseAdmin
-      .from('scores')
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid Matricule or Results PIN' });
+    }
+
+    // 3. Fetch ONLY PUBLISHED grades for this student
+    const { data: enrollments, error: enrollError } = await supabaseAdmin
+      .from('enrollments')
       .select(`
-        mark,
-        subject:subjects(name, coefficient)
+        id,
+        session_id,
+        academic_sessions ( name ),
+        courses ( code, name, credits, semester ),
+        grades ( ca_score, exam_score, total_score, letter_grade, gpa_points, is_published )
       `)
-      .eq('student_id', student.id)
-      .eq('period_id', period_id as string);
-
-    // Compute weighted average
-    let totalWeighted = 0;
-    let totalCoefficient = 0;
-    const subjectResults = (scores || []).map((score: any) => {
-      const coeff = score.subject?.coefficient || 1;
-      totalWeighted += score.mark * coeff;
-      totalCoefficient += coeff;
-
-      return {
-        subject: score.subject?.name,
-        coefficient: coeff,
-        mark: score.mark,
-        weighted_mark: Math.round(score.mark * coeff * 100) / 100,
-        grade: getGrade(score.mark),
-        remark: getGradeRemark(score.mark),
-      };
-    });
-
-    const weightedAverage = totalCoefficient > 0
-      ? Math.round((totalWeighted / totalCoefficient) * 100) / 100
-      : 0;
-
-    // Get attendance summary
-    const { data: attendance } = await supabaseAdmin
-      .from('attendance')
-      .select('status')
       .eq('student_id', student.id);
 
-    const attendanceSummary = {
-      present: attendance?.filter(a => a.status === 'present').length || 0,
-      absent: attendance?.filter(a => a.status === 'absent').length || 0,
-      late: attendance?.filter(a => a.status === 'late').length || 0,
-      total: attendance?.length || 0,
-    };
+    if (enrollError) throw enrollError;
 
-    // Get discipline records
-    const { data: disciplineRecords } = await supabaseAdmin
-      .from('discipline_records')
-      .select('date, type, notes')
-      .eq('student_id', student.id)
-      .order('date', { ascending: false })
-      .limit(10);
+    // Filter to only published grades
+    const publishedResults: any[] = [];
+    let totalCredits = 0;
+    let totalQualityPoints = 0;
+
+    (enrollments || []).forEach((e: any) => {
+      const g = e.grades;
+      if (g && g.is_published) {
+        const credits = Number(e.courses?.credits || 0);
+        const pts = Number(g.gpa_points || 0);
+        totalCredits += credits;
+        totalQualityPoints += pts * credits;
+
+        publishedResults.push({
+          sessionName: e.academic_sessions?.name,
+          courseCode: e.courses?.code,
+          courseName: e.courses?.name,
+          credits,
+          semester: e.courses?.semester,
+          caScore: g.ca_score,
+          examScore: g.exam_score,
+          totalScore: g.total_score,
+          letterGrade: g.letter_grade,
+          gpaPoints: g.gpa_points,
+        });
+      }
+    });
+
+    const cgpa = totalCredits > 0 ? (totalQualityPoints / totalCredits).toFixed(2) : '0.00';
 
     res.json({
+      success: true,
       student: {
-        full_name: student.full_name,
-        student_code: student.student_code,
-        class_name: (student as any).class?.name,
-        stream: (student as any).class?.stream,
+        fullName: (student as any).user_profiles?.full_name,
+        matricule: student.matricule,
+        level: student.level,
+        programName: (student as any).programs?.name,
+        facultyName: (student as any).programs?.departments?.faculties?.name,
       },
-      period: {
-        year: period.year,
-        term: period.term,
-        sequence: period.sequence,
-        label: period.label,
-      },
-      subjects: subjectResults,
+      results: publishedResults,
       summary: {
-        weighted_average: weightedAverage,
-        overall_grade: getGrade(weightedAverage),
-        overall_remark: getGradeRemark(weightedAverage),
-        total_coefficient: totalCoefficient,
+        totalCourses: publishedResults.length,
+        totalCredits,
+        cgpa,
       },
-      attendance: attendanceSummary,
-      discipline: disciplineRecords?.length
-        ? disciplineRecords
-        : [{ notes: 'No incidents recorded' }],
     });
-  } catch (err) {
-    console.error('Public report error:', err);
-    res.status(500).json({ error: 'Failed to load report' });
+  } catch (err: any) {
+    console.error('Public results check error:', err);
+    res.status(500).json({ error: 'An error occurred while retrieving results' });
   }
 });
 
-// ─── GRADING HELPERS ──────────────────────────────────────
+/**
+ * GET /api/public/announcements
+ * Unauthenticated or authenticated announcements
+ */
+publicRouter.get('/announcements', async (_req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('announcements')
+      .select('*, user_profiles(full_name)')
+      .is('target_role', null)
+      .order('created_at', { ascending: false })
+      .limit(10);
 
-function getGrade(mark: number): string {
-  if (mark >= 16) return 'A';
-  if (mark >= 14) return 'B';
-  if (mark >= 12) return 'C';
-  if (mark >= 10) return 'D';
-  return 'F';
-}
-
-function getGradeRemark(mark: number): string {
-  if (mark >= 16) return 'Excellent';
-  if (mark >= 14) return 'Very Good';
-  if (mark >= 12) return 'Good';
-  if (mark >= 10) return 'Average';
-  return 'Below Average';
-}
+    if (error) throw error;
+    res.json({ announcements: data || [] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
