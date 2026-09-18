@@ -2,22 +2,40 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './contexts/AuthContext';
 
+// Public
 import { Login } from './pages/Login';
 import { PublicCheckResults } from './pages/public/CheckResults';
 
+// Admin
 import { AdminDashboard } from './pages/admin/Dashboard';
 import { AdminUsers } from './pages/admin/Users';
-import { AdminClasses } from './pages/admin/Classes';
 import { AdminStudents } from './pages/admin/Students';
+import { AdminLecturers } from './pages/admin/Lecturers';
+import { AdminAcademicStructure } from './pages/admin/AcademicStructure';
 import { AdminReports } from './pages/admin/Reports';
+import { AdminAuditLogs } from './pages/admin/AuditLogs';
 
-import { TeacherMyClasses } from './pages/teacher/MyClasses';
-import { TeacherScoreEntry } from './pages/teacher/ScoreEntry';
-import { TeacherAttendance } from './pages/teacher/Attendance';
+// Lecturer
+import { LecturerDashboard } from './pages/lecturer/Dashboard';
+import { LecturerMyCourses } from './pages/lecturer/MyCourses';
+import { LecturerScoreEntry } from './pages/lecturer/ScoreEntry';
+import { LecturerAttendance } from './pages/lecturer/Attendance';
+import { LecturerResources } from './pages/lecturer/Resources';
 
-import { DisciplineStudentSearch } from './pages/discipline/StudentSearch';
-import { DisciplineLogIncident } from './pages/discipline/LogIncident';
-import { DisciplineHistory } from './pages/discipline/History';
+// Student
+import { StudentDashboard } from './pages/student/Dashboard';
+import { StudentCourseRegistration } from './pages/student/CourseRegistration';
+import { StudentGrades } from './pages/student/Grades';
+import { StudentAttendance } from './pages/student/Attendance';
+import { StudentFinance } from './pages/student/Finance';
+import { StudentResources } from './pages/student/Resources';
+
+// Finance
+import { FinanceDashboard } from './pages/finance/Dashboard';
+import { FinanceFeeStructures } from './pages/finance/FeeStructures';
+import { FinanceInvoices } from './pages/finance/Invoices';
+import { FinancePayments } from './pages/finance/Payments';
+import { FinanceDefaulters } from './pages/finance/Defaulters';
 
 import { ProtectedRoute } from './components/layout/ProtectedRoute';
 
@@ -35,106 +53,43 @@ export function App() {
         }}
       />
       <Routes>
-        {/* Public Routes */}
+        {/* ── Public ────────────────────────────────────────────── */}
         <Route path="/login" element={<Login />} />
         <Route path="/check-results" element={<PublicCheckResults />} />
 
-        {/* Admin Routes */}
-        <Route
-          path="/admin"
-          element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <AdminDashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/users"
-          element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <AdminUsers />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/classes"
-          element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <AdminClasses />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/students"
-          element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <AdminStudents />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/reports"
-          element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <AdminReports />
-            </ProtectedRoute>
-          }
-        />
+        {/* ── Admin ─────────────────────────────────────────────── */}
+        <Route path="/admin" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboard /></ProtectedRoute>} />
+        <Route path="/admin/academic" element={<ProtectedRoute allowedRoles={['admin']}><AdminAcademicStructure /></ProtectedRoute>} />
+        <Route path="/admin/students" element={<ProtectedRoute allowedRoles={['admin']}><AdminStudents /></ProtectedRoute>} />
+        <Route path="/admin/lecturers" element={<ProtectedRoute allowedRoles={['admin']}><AdminLecturers /></ProtectedRoute>} />
+        <Route path="/admin/reports" element={<ProtectedRoute allowedRoles={['admin']}><AdminReports /></ProtectedRoute>} />
+        <Route path="/admin/audit" element={<ProtectedRoute allowedRoles={['admin']}><AdminAuditLogs /></ProtectedRoute>} />
+        <Route path="/admin/users" element={<ProtectedRoute allowedRoles={['admin']}><AdminUsers /></ProtectedRoute>} />
 
-        {/* Teacher Routes */}
-        <Route
-          path="/teacher"
-          element={
-            <ProtectedRoute allowedRoles={['teacher', 'admin']}>
-              <TeacherMyClasses />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/teacher/scores"
-          element={
-            <ProtectedRoute allowedRoles={['teacher', 'admin']}>
-              <TeacherScoreEntry />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/teacher/attendance"
-          element={
-            <ProtectedRoute allowedRoles={['teacher', 'admin']}>
-              <TeacherAttendance />
-            </ProtectedRoute>
-          }
-        />
+        {/* ── Lecturer ──────────────────────────────────────────── */}
+        <Route path="/lecturer" element={<ProtectedRoute allowedRoles={['lecturer', 'admin']}><LecturerDashboard /></ProtectedRoute>} />
+        <Route path="/lecturer/courses" element={<ProtectedRoute allowedRoles={['lecturer', 'admin']}><LecturerMyCourses /></ProtectedRoute>} />
+        <Route path="/lecturer/scores" element={<ProtectedRoute allowedRoles={['lecturer', 'admin']}><LecturerScoreEntry /></ProtectedRoute>} />
+        <Route path="/lecturer/attendance" element={<ProtectedRoute allowedRoles={['lecturer', 'admin']}><LecturerAttendance /></ProtectedRoute>} />
+        <Route path="/lecturer/resources" element={<ProtectedRoute allowedRoles={['lecturer', 'admin']}><LecturerResources /></ProtectedRoute>} />
 
-        {/* Discipline Routes */}
-        <Route
-          path="/discipline"
-          element={
-            <ProtectedRoute allowedRoles={['discipline', 'admin']}>
-              <DisciplineStudentSearch />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/discipline/log"
-          element={
-            <ProtectedRoute allowedRoles={['discipline', 'admin']}>
-              <DisciplineLogIncident />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/discipline/history"
-          element={
-            <ProtectedRoute allowedRoles={['discipline', 'admin']}>
-              <DisciplineHistory />
-            </ProtectedRoute>
-          }
-        />
+        {/* ── Student ───────────────────────────────────────────── */}
+        <Route path="/student" element={<ProtectedRoute allowedRoles={['student', 'admin']}><StudentDashboard /></ProtectedRoute>} />
+        <Route path="/student/courses" element={<ProtectedRoute allowedRoles={['student', 'admin']}><StudentCourseRegistration /></ProtectedRoute>} />
+        <Route path="/student/grades" element={<ProtectedRoute allowedRoles={['student', 'admin']}><StudentGrades /></ProtectedRoute>} />
+        <Route path="/student/attendance" element={<ProtectedRoute allowedRoles={['student', 'admin']}><StudentAttendance /></ProtectedRoute>} />
+        <Route path="/student/finance" element={<ProtectedRoute allowedRoles={['student', 'admin']}><StudentFinance /></ProtectedRoute>} />
+        <Route path="/student/resources" element={<ProtectedRoute allowedRoles={['student', 'admin']}><StudentResources /></ProtectedRoute>} />
 
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/check-results" replace />} />
+        {/* ── Finance ───────────────────────────────────────────── */}
+        <Route path="/finance" element={<ProtectedRoute allowedRoles={['finance', 'admin']}><FinanceDashboard /></ProtectedRoute>} />
+        <Route path="/finance/fee-structures" element={<ProtectedRoute allowedRoles={['finance', 'admin']}><FinanceFeeStructures /></ProtectedRoute>} />
+        <Route path="/finance/invoices" element={<ProtectedRoute allowedRoles={['finance', 'admin']}><FinanceInvoices /></ProtectedRoute>} />
+        <Route path="/finance/payments" element={<ProtectedRoute allowedRoles={['finance', 'admin']}><FinancePayments /></ProtectedRoute>} />
+        <Route path="/finance/defaulters" element={<ProtectedRoute allowedRoles={['finance', 'admin']}><FinanceDefaulters /></ProtectedRoute>} />
+
+        {/* ── Fallback ──────────────────────────────────────────── */}
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </AuthProvider>
   );
