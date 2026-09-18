@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-export const AcademicStructure: React.FC = () => {
+export const AdminAcademicStructure: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'faculties' | 'departments' | 'programs' | 'courses' | 'sessions'>('faculties');
   const [faculties, setFaculties] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
@@ -148,11 +148,10 @@ export const AcademicStructure: React.FC = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center space-x-2 py-3 px-4 text-xs font-bold border-b-2 transition-all duration-150 whitespace-nowrap ${
-                isActive
+              className={`flex items-center space-x-2 py-3 px-4 text-xs font-bold border-b-2 transition-all duration-150 whitespace-nowrap ${isActive
                   ? 'border-blue-600 text-blue-600 dark:text-blue-400'
                   : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-300'
-              }`}
+                }`}
             >
               <Icon className="w-4 h-4" />
               <span>{tab.label}</span>
