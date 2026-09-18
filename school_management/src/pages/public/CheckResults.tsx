@@ -1,261 +1,292 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api';
-import type { PublicReportResult } from '../../types/index';
-import { Card } from '../../components/ui/Card';
+import { PasswordInput } from '../../components/ui/PasswordInput';
 import { Button } from '../../components/ui/Button';
-import { Input } from '../../components/ui/Input';
-import { Select } from '../../components/ui/Select';
-import { Badge } from '../../components/ui/Badge';
-import { School, Search, AlertCircle, ShieldCheck, Award } from 'lucide-react';
+import { ExpandableFAQ } from '../../components/ui/ExpandableFAQ';
+import {
+  GraduationCap,
+  Award,
+  Printer,
+  ArrowLeft,
+  AlertCircle,
+  FileCheck2,
+  Calendar,
+  BookOpen,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export const PublicCheckResults: React.FC = () => {
-  const [studentCode, setStudentCode] = useState('');
-  const [selectedPeriodId, setSelectedPeriodId] = useState('');
-  const [periods, setPeriods] = useState<any[]>([]);
+  const [matricule, setMatricule] = useState('');
+  const [pin, setPin] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [resultData, setResultData] = useState<any | null>(null);
+  const navigate = useNavigate();
 
-  const [loading, setLoading] = useState(false);
-  const [report, setReport] = useState<PublicReportResult | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  useEffect(() => {
-    async function loadPeriods() {
-      try {
-        const res = await api.get('/public/periods');
-        setPeriods(res.data.periods);
-        if (res.data.periods.length > 0) {
-          setSelectedPeriodId(res.data.periods[0].id);
-        }
-      } catch {
-        // fail silently
-      }
-    }
-    loadPeriods();
-  }, []);
-
-  const handleSearch = async (e: React.FormEvent) => {
+  const handleCheck = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!studentCode.trim() || !selectedPeriodId) {
-      toast.error('Please enter your student code and select a period');
+    if (!matricule.trim() || !pin.trim()) {
+      toast.error('Both Matricule and Results PIN are required');
       return;
     }
 
-    setLoading(true);
-    setErrorMsg(null);
-    setReport(null);
-
+    setIsLoading(true);
     try {
-      const res = await api.get(
-        `/public/report?student_code=${encodeURIComponent(studentCode.trim())}&period_id=${selectedPeriodId}`
-      );
-      setReport(res.data);
+      const res = await api.post('/public/check-results', {
+        matricule: matricule.trim().toUpperCase(),
+        pin: pin.trim(),
+      });
+      setResultData(res.data);
+      toast.success('Results verified successfully!');
     } catch (err: any) {
-      if (err.response?.status === 404) {
-        setErrorMsg('No record found. Please check your student code and try again.');
-      } else if (err.response?.status === 429) {
-        setErrorMsg('Too many requests. Please wait a moment before trying again.');
-      } else {
-        setErrorMsg('Unable to retrieve report card at this time. Please try again.');
-      }
+      setResultData(null);
+      toast.error(
+        err.response?.data?.error ||
+          'Invalid Matricule or Results PIN. Please ensure you entered the correct details.'
+      );
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const faqItems = [
+    {
+      question: 'Where can I find my Results PIN?',
+      answer:
+        'Your Results PIN was provided on the official printable credentials slip issued by the UNHIMAS registry upon registration. It is a private 6-character code distinct from your portal password.',
+    },
+    {
+      question: 'Why are some of my registered courses not showing here?',
+      answer:
+        'The Public Results Verification system displays only courses whose grades have been officially vetted and marked as "Published" by your Lecturer and the Dean of Academic Affairs.',
+    },
+    {
+      question: 'Is this an official academic transcript?',
+      answer:
+        'This statement of results is for informational and verification purposes. Official sealed transcripts must be requested through the Student Portal or Academic Registry.',
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col justify-between">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col justify-between p-4 sm:p-6 lg:p-8 transition-colors">
       {/* Header */}
-      <header className="bg-slate-900/80 border-b border-slate-800/80 backdrop-blur-md px-6 py-4 flex items-center justify-between">
+      <header className="max-w-5xl w-full mx-auto flex items-center justify-between py-2 border-b border-slate-200/80 dark:border-slate-800/80 pb-4 print:hidden">
         <div className="flex items-center space-x-3">
-          <div className="p-2 bg-amber-500/10 rounded-xl border border-amber-500/20">
-            <School className="w-6 h-6 text-amber-500" />
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-700 via-indigo-600 to-amber-500 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
+            <GraduationCap className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-base font-bold text-slate-100">Cameroon Excellence Academy</h1>
-            <p className="text-xs text-slate-400">Public Student Results Portal</p>
+            <h1 className="text-base font-black tracking-tight">UNHIMAS Bilingual University</h1>
+            <p className="text-[11px] text-slate-500">Public Examination Results Portal</p>
           </div>
         </div>
-        <a
-          href="/login"
-          className="text-xs font-semibold text-amber-400 hover:text-amber-300 border border-amber-500/30 px-3 py-1.5 rounded-lg hover:bg-amber-500/10 transition-colors"
+
+        <button
+          onClick={() => navigate('/login')}
+          className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-colors"
         >
-          Staff Login
-        </a>
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>Staff / Student Portal</span>
+        </button>
       </header>
 
       {/* Main Container */}
-      <main className="flex-1 max-w-4xl w-full mx-auto p-6 space-y-8">
+      <main className="max-w-4xl w-full mx-auto my-8 space-y-8 flex-1">
         {/* Search Card */}
-        <Card className="text-center p-8 bg-gradient-to-b from-slate-900 to-slate-950">
-          <Award className="w-12 h-12 text-amber-500 mx-auto mb-3 animate-bounce" />
-          <h2 className="text-2xl font-bold text-slate-100 mb-1">Check Your Academic Results</h2>
-          <p className="text-xs text-slate-400 max-w-md mx-auto mb-6">
-            Enter your unique student code (e.g. SCH-2026-F4-0142) and choose an academic sequence to view your official report card.
-          </p>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl print:hidden space-y-6">
+          <div className="space-y-1">
+            <div className="inline-flex items-center space-x-2 px-2.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 text-xs font-semibold border border-amber-500/20">
+              <Award className="w-3.5 h-3.5" />
+              <span>Instant Verification</span>
+            </div>
+            <h2 className="text-2xl font-black tracking-tight text-slate-900 dark:text-slate-100">
+              Check Semester Examination Results
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Enter your student matricule and private results PIN to view your verified published grades.
+            </p>
+          </div>
 
-          <form onSubmit={handleSearch} className="max-w-lg mx-auto space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="sm:col-span-2">
-                <Input
-                  placeholder="Enter Student Code (e.g. SCH-2026-F4-0142)"
-                  value={studentCode}
-                  onChange={(e) => setStudentCode(e.target.value.toUpperCase())}
-                  required
-                />
-              </div>
-              <Select
-                value={selectedPeriodId}
-                onChange={(e) => setSelectedPeriodId(e.target.value)}
-                options={periods.map((p) => ({
-                  value: p.id,
-                  label: `${p.label} (${p.year})`,
-                }))}
+          <form onSubmit={handleCheck} className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-end">
+            <div className="sm:col-span-6 space-y-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                Student Matricule
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. UNH25-CS-0001"
+                value={matricule}
+                onChange={(e) => setMatricule(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-white dark:bg-slate-900/90 text-slate-900 dark:text-slate-100 placeholder-slate-400 border border-slate-200 dark:border-slate-800 rounded-xl text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 uppercase"
                 required
               />
             </div>
 
-            <Button
-              type="submit"
-              isLoading={loading}
-              className="w-full sm:w-auto px-8 flex items-center justify-center space-x-2 mx-auto"
-            >
-              <Search className="w-4 h-4" />
-              <span>Check Results</span>
-            </Button>
+            <div className="sm:col-span-4">
+              <PasswordInput
+                label="Results PIN"
+                placeholder="Enter confidential PIN"
+                value={pin}
+                onChange={(e) => setPin(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <Button type="submit" variant="primary" className="w-full py-2.5" isLoading={isLoading}>
+                Verify
+              </Button>
+            </div>
           </form>
-        </Card>
+        </div>
 
-        {/* Error Alert */}
-        {errorMsg && (
-          <div className="bg-rose-500/10 border border-rose-500/30 text-rose-400 rounded-xl p-4 flex items-center space-x-3 text-sm">
-            <AlertCircle className="w-5 h-5 flex-shrink-0" />
-            <p>{errorMsg}</p>
-          </div>
-        )}
-
-        {/* On-Screen Report Card Result */}
-        {report && (
-          <div className="space-y-6 animate-fadeIn">
-            {/* Student Info Card */}
-            <Card className="bg-slate-900 border-amber-500/30">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-4 mb-4">
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <h3 className="text-xl font-bold text-slate-100">{report.student.full_name}</h3>
-                    <Badge variant="warning">{report.student.student_code}</Badge>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Class: <span className="text-slate-200 font-semibold">{report.student.class_name}</span>
-                    {report.student.stream ? ` (${report.student.stream})` : ''}
-                  </p>
-                </div>
-                <div className="mt-3 sm:mt-0 text-right">
-                  <Badge variant="info" size="md">{report.period.label}</Badge>
-                  <p className="text-xs text-slate-400 mt-1">Academic Year: {report.period.year}</p>
+        {/* Results Slip Display (Printable) */}
+        {resultData && (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl space-y-6 print:border-none print:shadow-none print:p-0">
+            {/* Header for slip */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-6 border-b border-slate-200 dark:border-slate-800 gap-4">
+              <div className="space-y-1">
+                <p className="text-xs font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400">
+                  Official Statement of Examination Results
+                </p>
+                <h3 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100">
+                  {resultData.student.fullName}
+                </h3>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
+                    {resultData.student.matricule}
+                  </span>
+                  <span>&bull;</span>
+                  <span>{resultData.student.programName}</span>
+                  <span>&bull;</span>
+                  <span>Level: {resultData.student.level}</span>
                 </div>
               </div>
 
-              {/* Subject Marks Table */}
+              <div className="flex items-center space-x-2 print:hidden">
+                <Button variant="secondary" onClick={handlePrint}>
+                  <Printer className="w-4 h-4 mr-2" />
+                  Print Statement
+                </Button>
+              </div>
+            </div>
+
+            {/* Results Table */}
+            {resultData.results.length === 0 ? (
+              <div className="py-12 text-center space-y-2">
+                <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
+                <p className="font-semibold text-slate-800 dark:text-slate-200">
+                  No published grades found
+                </p>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  Grades for this academic session have either not yet been entered or are awaiting official publication by the faculty board.
+                </p>
+              </div>
+            ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-950 text-xs uppercase tracking-wider text-slate-400 border-b border-slate-800">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-bold uppercase tracking-wider">
                     <tr>
-                      <th className="px-4 py-3">Subject</th>
-                      <th className="px-4 py-3 text-center">Coeff</th>
-                      <th className="px-4 py-3 text-center">Mark / 20</th>
-                      <th className="px-4 py-3 text-center">Weighted Mark</th>
-                      <th className="px-4 py-3 text-center">Grade</th>
-                      <th className="px-4 py-3">Remark</th>
+                      <th className="py-3 px-3.5 rounded-l-xl">Course Code</th>
+                      <th className="py-3 px-3.5">Course Title</th>
+                      <th className="py-3 px-3.5 text-center">Credits</th>
+                      <th className="py-3 px-3.5 text-center">CA (/30)</th>
+                      <th className="py-3 px-3.5 text-center">Exam (/70)</th>
+                      <th className="py-3 px-3.5 text-center">Total (/100)</th>
+                      <th className="py-3 px-3.5 text-center">Grade</th>
+                      <th className="py-3 px-3.5 text-center rounded-r-xl">GPA Pts</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60">
-                    {report.subjects.map((sub, idx) => (
-                      <tr key={idx} className="hover:bg-slate-800/30">
-                        <td className="px-4 py-3 font-semibold text-slate-100">{sub.subject}</td>
-                        <td className="px-4 py-3 text-center text-slate-400">{sub.coefficient}</td>
-                        <td
-                          className={`px-4 py-3 text-center font-bold font-mono ${
-                            sub.mark >= 10 ? 'text-emerald-400' : 'text-rose-400'
-                          }`}
-                        >
-                          {sub.mark}
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                    {resultData.results.map((r: any, idx: number) => (
+                      <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                        <td className="py-3.5 px-3.5 font-bold font-mono text-blue-600 dark:text-blue-400">
+                          {r.courseCode}
                         </td>
-                        <td className="px-4 py-3 text-center text-slate-300 font-mono">{sub.weighted_mark}</td>
-                        <td className="px-4 py-3 text-center">
-                          <Badge variant={sub.mark >= 10 ? 'success' : 'danger'}>{sub.grade}</Badge>
+                        <td className="py-3.5 px-3.5">{r.courseName}</td>
+                        <td className="py-3.5 px-3.5 text-center">{r.credits}</td>
+                        <td className="py-3.5 px-3.5 text-center">{r.caScore}</td>
+                        <td className="py-3.5 px-3.5 text-center">{r.examScore}</td>
+                        <td className="py-3.5 px-3.5 text-center font-bold">{r.totalScore}</td>
+                        <td className="py-3.5 px-3.5 text-center">
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded-md font-bold text-xs ${
+                              r.letterGrade === 'A'
+                                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                                : r.letterGrade?.startsWith('B')
+                                ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
+                                : r.letterGrade?.startsWith('C')
+                                ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                                : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                            }`}
+                          >
+                            {r.letterGrade}
+                          </span>
                         </td>
-                        <td className="px-4 py-3 text-xs text-slate-300">{sub.remark}</td>
+                        <td className="py-3.5 px-3.5 text-center font-mono font-semibold">
+                          {r.gpaPoints?.toFixed(1)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            </Card>
+            )}
 
-            {/* Summary Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Overall Score Summary */}
-              <Card className="flex flex-col justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Overall Performance</p>
-                <div className="my-4">
-                  <div className="text-3xl font-extrabold text-amber-400">
-                    {report.summary.weighted_average} <span className="text-base text-slate-500">/ 20</span>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-1">Weighted Average Mark</p>
+            {/* Summary Statistics Card */}
+            {resultData.results.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    Courses Completed
+                  </p>
+                  <p className="text-xl font-black text-slate-900 dark:text-slate-100">
+                    {resultData.summary.totalCourses}
+                  </p>
                 </div>
-                <div className="flex items-center justify-between border-t border-slate-800 pt-3">
-                  <span className="text-xs text-slate-400">Grade & Remark:</span>
-                  <Badge variant={report.summary.weighted_average >= 10 ? 'success' : 'danger'}>
-                    {report.summary.overall_grade} — {report.summary.overall_remark}
-                  </Badge>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    Total Credits Earned
+                  </p>
+                  <p className="text-xl font-black text-slate-900 dark:text-slate-100">
+                    {resultData.summary.totalCredits}
+                  </p>
                 </div>
-              </Card>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    Cumulative GPA (CGPA)
+                  </p>
+                  <p className="text-xl font-black text-amber-500">
+                    {resultData.summary.cgpa} / 4.00
+                  </p>
+                </div>
+              </div>
+            )}
 
-              {/* Attendance Summary */}
-              <Card className="flex flex-col justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Attendance Summary</p>
-                <div className="grid grid-cols-3 gap-2 my-4 text-center">
-                  <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-2">
-                    <p className="text-lg font-bold text-emerald-400">{report.attendance.present}</p>
-                    <p className="text-[10px] text-slate-400">Present</p>
-                  </div>
-                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2">
-                    <p className="text-lg font-bold text-amber-400">{report.attendance.late}</p>
-                    <p className="text-[10px] text-slate-400">Late</p>
-                  </div>
-                  <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-2">
-                    <p className="text-lg font-bold text-rose-400">{report.attendance.absent}</p>
-                    <p className="text-[10px] text-slate-400">Absent</p>
-                  </div>
-                </div>
-                <p className="text-xs text-slate-500 text-center border-t border-slate-800 pt-3">
-                  Total Sessions Logged: {report.attendance.total}
-                </p>
-              </Card>
-
-              {/* Discipline Remarks */}
-              <Card className="flex flex-col justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Discipline Status</p>
-                <div className="my-4 space-y-2">
-                  {report.discipline.map((d, idx) => (
-                    <div key={idx} className="text-xs p-2 bg-slate-950 rounded border border-slate-800 text-slate-300">
-                      {d.notes}
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center space-x-1 text-xs text-emerald-400 border-t border-slate-800 pt-3">
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>Official Verified Record</span>
-                </div>
-              </Card>
+            {/* Official Footer Note */}
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
+              <div className="flex items-center space-x-1.5">
+                <FileCheck2 className="w-4 h-4 text-emerald-500" />
+                <span>Digitally verified via UNHIMAS Academic Registry Security Hash</span>
+              </div>
+              <span>Generated: {new Date().toLocaleDateString()}</span>
             </div>
           </div>
         )}
+
+        {/* Expandable FAQ */}
+        <div className="print:hidden">
+          <ExpandableFAQ items={faqItems} />
+        </div>
       </main>
 
       {/* Footer */}
-      <footer className="bg-slate-900/60 border-t border-slate-800/80 py-4 text-center text-xs text-slate-500">
-        © {new Date().getFullYear()} Cameroon Excellence Academy — Powered by School Management System
+      <footer className="max-w-5xl w-full mx-auto text-center py-4 border-t border-slate-200/80 dark:border-slate-800/80 text-xs text-slate-400 print:hidden">
+        &copy; {new Date().getFullYear()} UNHIMAS Bilingual University (Yaoundé, Cameroon). All rights reserved.
       </footer>
     </div>
   );
