@@ -1,0 +1,521 @@
+import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import {
+  MdBook,
+  MdHowToReg,
+  MdGrade,
+  MdAccessTime,
+  MdNotifications,
+  MdWarning,
+  MdCheckCircle,
+  MdSchedule,
+  MdArrowForward,
+  MdRefresh,
+  MdClass,
+} from 'react-icons/md';
+import AppLayout from '../../components/layout/AppLayout';
+import { useAuth } from '../../context/AuthContext';
+import {
+  getMyLecturerProfile,
+  getLecturerDashboardStats,
+  getTodaySessions,
+  getUpcomingSessions,
+  getMyMarkSubmissions,
+  getMyNotifications,
+} from '../../services/lecturerService';
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function fmtTime(iso) {
+  if (!iso) return '--:--';
+  return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('en-GB', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function statusBadge(status) {
+  const map = {
+    draft: { cls: 'badge-gray', label: 'Draft' },
+    submitted: { cls: 'badge-blue', label: 'Submitted' },
+    returned: { cls: 'badge-red', label: 'Returned' },
+    approved: { cls: 'badge-green', label: 'Approved' },
+    published: { cls: 'badge-purple', label: 'Published' },
+  };
+  const s = map[status] || { cls: 'badge-gray', label: status };
+  return <span className={`badge ${s.cls}`}>{s.label}</span>;
+}
+
+// ─── Stat Card ────────────────────────────────────────────────────────────────
+
+function StatCard({ icon, value, label, color = 'blue', link, alert }) {
+  const inner = (
+    <div className="stat-card" style={alert ? { borderLeft: '3px solid var(--color-secondary)' } : {}}>
+      <div className={`stat-card-icon ${color}`}>{icon}</div>
+      <div className="stat-card-body">
+        <div className="stat-card-value">{value ?? '—'}</div>
+        <div className="stat-card-label">{label}</div>
+      </div>
+    </div>
+  );
+  if (link) return <Link to={link} style={{ textDecoration: 'none' }}>{inner}</Link>;
+  return inner;
+}
+
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
+
+function StatSkeleton() {
+  return (
+    <div className="stat-card">
+      <div className="skeleton skeleton-box" style={{ width: 44, height: 44, borderRadius: 8 }} />
+      <div style={{ flex: 1 }}>
+        <div className="skeleton skeleton-title" style={{ width: 60, marginBottom: 6 }} />
+        <div className="skeleton skeleton-text" style={{ width: 120 }} />
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+export default function LecturerDashboard() {
+  const { session, profile } = useAuth();
+
+  // Step 1: get my lecturer record
+  const {
+    data: lecturerProfile,
+    isLoading: lecLoading,
+    error: lecError,
+  } = useQuery({
+    queryKey: ['my-lecturer-profile'],
+    queryFn: getMyLecturerProfile,
+    enabled: !!session,
+  });
+
+  const lecturerId = lecturerProfile?.id;
+  const profileId = profile?.id;
+
+  // Step 2: Dashboard stats
+  const { data: stats = {}, isLoading: statsLoading, refetch: refetchStats } = useQuery({
+    queryKey: ['lecturer-dashboard-stats', lecturerId, profileId],
+    queryFn: () => getLecturerDashboardStats(lecturerId, profileId),
+    enabled: !!lecturerId && !!profileId,
+  });
+
+  // Step 3: Today's sessions
+  const { data: todaySessions = [], isLoading: sessionsLoading } = useQuery({
+    queryKey: ['lecturer-today-sessions', lecturerId],
+    queryFn: () => getTodaySessions(lecturerId),
+    enabled: !!lecturerId,
+  });
+
+  // Step 4: Upcoming sessions
+  const { data: upcomingSessions = [] } = useQuery({
+    queryKey: ['lecturer-upcoming-sessions', lecturerId],
+    queryFn: () => getUpcomingSessions(lecturerId),
+    enabled: !!lecturerId,
+  });
+
+  // Step 5: My mark submissions
+  const { data: markSubmissions = [], isLoading: marksLoading } = useQuery({
+    queryKey: ['my-mark-submissions', lecturerId],
+    queryFn: () => getMyMarkSubmissions(lecturerId),
+    enabled: !!lecturerId,
+  });
+
+  // Step 6: Notifications
+  const { data: notifications = [], isLoading: notifsLoading } = useQuery({
+    queryKey: ['my-notifications', profileId],
+    queryFn: () => getMyNotifications(profileId, { limit: 5 }),
+    enabled: !!profileId,
+  });
+
+  const formattedDate = new Date().toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+
+  if (lecLoading) {
+    return (
+      <AppLayout pageTitle="Lecturer Dashboard">
+        <div className="page-header">
+          <div className="page-header-left">
+            <h1 className="page-title">My Dashboard</h1>
+            <p className="page-subtitle">Loading your workspace…</p>
+          </div>
+        </div>
+        <div className="stats-grid">
+          {[1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)}
+        </div>
+      </AppLayout>
+    );
+  }
+
+  if (lecError) {
+    return (
+      <AppLayout pageTitle="Lecturer Dashboard">
+        <div className="empty-state">
+          <div className="empty-state-icon"><MdWarning /></div>
+          <div className="empty-state-title">Profile Not Linked</div>
+          <p className="empty-state-text">
+            Your account is not yet linked to a lecturer profile. Please contact the administrator.
+          </p>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  const firstName = lecturerProfile?.first_name || 'Lecturer';
+  const dept = lecturerProfile?.departments?.name || '';
+
+  const pendingOrReturned = markSubmissions.filter(
+    (m) => m.status === 'draft' || m.status === 'returned'
+  );
+
+  const returnedSubmissions = markSubmissions.filter((m) => m.status === 'returned');
+
+  return (
+    <AppLayout pageTitle="Lecturer Dashboard">
+      {/* Skip link */}
+      <a href="#main-content" className="skip-link">Skip to main content</a>
+
+      {/* Page Header */}
+      <div className="page-header">
+        <div className="page-header-left">
+          <h1 className="page-title">Welcome back, {firstName}</h1>
+          <p className="page-subtitle">{formattedDate} · {dept}</p>
+        </div>
+        <div className="page-header-actions">
+          <button
+            className="btn btn-outline btn-sm"
+            onClick={() => refetchStats()}
+            aria-label="Refresh dashboard"
+          >
+            <MdRefresh /> Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Current shift banner */}
+      {stats.currentShift && (
+        <div
+          style={{
+            background: 'rgba(16,185,129,0.07)',
+            border: '1px solid rgba(16,185,129,0.25)',
+            borderRadius: 'var(--radius-md)',
+            padding: '0.75rem 1.25rem',
+            marginBottom: '1.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            color: '#059669',
+            fontSize: '0.875rem',
+            fontWeight: 600,
+          }}
+        >
+          <MdCheckCircle size={20} />
+          You are currently clocked in (since {fmtTime(stats.currentShift.clock_in)})
+        </div>
+      )}
+
+      {/* Returned marks alert */}
+      {returnedSubmissions.length > 0 && (
+        <div
+          style={{
+            background: 'rgba(183,0,50,0.06)',
+            border: '1px solid rgba(183,0,50,0.25)',
+            borderRadius: 'var(--radius-md)',
+            padding: '0.75rem 1.25rem',
+            marginBottom: '1.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            color: 'var(--color-secondary)',
+            fontSize: '0.875rem',
+            fontWeight: 600,
+          }}
+        >
+          <MdWarning size={20} />
+          {returnedSubmissions.length} mark submission(s) returned for correction — please review
+          <Link to="/lecturer/marks" style={{ marginLeft: 'auto', color: 'var(--color-secondary)', fontWeight: 700, fontSize: '0.8125rem' }}>
+            View Marks <MdArrowForward />
+          </Link>
+        </div>
+      )}
+
+      {/* Stat Cards */}
+      <div className="stats-grid">
+        {statsLoading ? (
+          [1, 2, 3, 4, 5, 6].map((i) => <StatSkeleton key={i} />)
+        ) : (
+          <>
+            <StatCard icon={<MdBook />} value={stats.totalCourses} label="Assigned Courses" color="blue" link="/lecturer/courses" />
+            <StatCard icon={<MdSchedule />} value={stats.todaySessions} label="Sessions Today" color="amber" />
+            <StatCard icon={<MdGrade />} value={stats.pendingMarksDraft} label="Draft Mark Entries" color="blue" link="/lecturer/marks" />
+            <StatCard icon={<MdWarning />} value={stats.returnedMarks} label="Returned Marks" color="red" link="/lecturer/marks" alert={stats.returnedMarks > 0} />
+            <StatCard icon={<MdAccessTime />} value={`${stats.monthlyHours}h`} label="Hours This Month" color="green" link="/lecturer/hours" />
+            <StatCard icon={<MdNotifications />} value={stats.unreadNotifications} label="Unread Notifications" color={stats.unreadNotifications > 0 ? 'red' : 'blue'} link="/lecturer/notifications" />
+          </>
+        )}
+      </div>
+
+      {/* Main grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+        {/* Today's Sessions */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <MdSchedule color="var(--color-primary)" /> Today's Sessions
+            </span>
+            <Link to="/lecturer/sessions" className="btn btn-ghost btn-sm">View All</Link>
+          </div>
+          <div className="card-body" style={{ padding: 0 }}>
+            {sessionsLoading ? (
+              <div style={{ padding: '1rem' }}>
+                {[1, 2].map((i) => (
+                  <div key={i} style={{ marginBottom: 12 }}>
+                    <div className="skeleton skeleton-text" style={{ width: '70%', marginBottom: 6 }} />
+                    <div className="skeleton skeleton-text" style={{ width: '40%' }} />
+                  </div>
+                ))}
+              </div>
+            ) : todaySessions.length === 0 ? (
+              <div className="empty-state" style={{ padding: '2rem' }}>
+                <div className="empty-state-icon"><MdSchedule /></div>
+                <div className="empty-state-title">No sessions today</div>
+                <p className="empty-state-text">You have no scheduled classes today.</p>
+              </div>
+            ) : (
+              <div>
+                {todaySessions.map((s) => (
+                  <div
+                    key={s.id}
+                    style={{
+                      padding: '0.875rem 1.25rem',
+                      borderBottom: '1px solid var(--color-border)',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '0.875rem',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 8,
+                        background: 'rgba(17,47,66,0.08)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <MdClass color="var(--color-primary)" />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.875rem', color: 'var(--color-text)' }}>
+                        {s.batch_courses?.courses?.code} — {s.batch_courses?.courses?.name}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                        {s.batch_courses?.batches?.name} · {fmtTime(s.scheduled_start)} – {fmtTime(s.scheduled_end)}
+                      </div>
+                      {s.room && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Room: {s.room}</div>}
+                    </div>
+                    <Link to={`/lecturer/sessions`} className="btn btn-ghost btn-sm">
+                      <MdHowToReg /> Attend
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Mark Submissions Status */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <MdGrade color="var(--color-secondary)" /> My Marks
+            </span>
+            <Link to="/lecturer/marks" className="btn btn-ghost btn-sm">Manage Marks</Link>
+          </div>
+          <div className="card-body" style={{ padding: 0 }}>
+            {marksLoading ? (
+              <div style={{ padding: '1rem' }}>
+                {[1, 2, 3].map((i) => (
+                  <div key={i} style={{ marginBottom: 10 }}>
+                    <div className="skeleton skeleton-text" style={{ width: '80%', marginBottom: 4 }} />
+                    <div className="skeleton skeleton-text" style={{ width: '50%' }} />
+                  </div>
+                ))}
+              </div>
+            ) : markSubmissions.length === 0 ? (
+              <div className="empty-state" style={{ padding: '2rem' }}>
+                <div className="empty-state-icon"><MdGrade /></div>
+                <div className="empty-state-title">No mark submissions yet</div>
+                <p className="empty-state-text">Start entering marks for your courses.</p>
+                <Link to="/lecturer/marks" className="btn btn-primary btn-sm" style={{ marginTop: '0.75rem' }}>Enter Marks</Link>
+              </div>
+            ) : (
+              <div>
+                {markSubmissions.slice(0, 6).map((m) => (
+                  <div
+                    key={m.id}
+                    style={{
+                      padding: '0.875rem 1.25rem',
+                      borderBottom: '1px solid var(--color-border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '0.75rem',
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.875rem', color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {m.batch_courses?.courses?.code} — {m.batch_courses?.courses?.name}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                        {m.batch_courses?.batches?.name} · Sem {m.batch_courses?.semesters?.number}
+                      </div>
+                      {m.status === 'returned' && m.admin_comment && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-secondary)', marginTop: 4, fontStyle: 'italic' }}>
+                          "{m.admin_comment}"
+                        </div>
+                      )}
+                    </div>
+                    {statusBadge(m.status)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Upcoming Classes */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <MdSchedule color="var(--color-primary)" /> Upcoming Classes
+            </span>
+          </div>
+          <div className="card-body" style={{ padding: 0 }}>
+            {upcomingSessions.length === 0 ? (
+              <div className="empty-state" style={{ padding: '1.5rem' }}>
+                <div className="empty-state-title">No upcoming classes in next 7 days</div>
+              </div>
+            ) : (
+              <div>
+                {upcomingSessions.map((s) => (
+                  <div
+                    key={s.id}
+                    style={{
+                      padding: '0.75rem 1.25rem',
+                      borderBottom: '1px solid var(--color-border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.75rem',
+                    }}
+                  >
+                    <div
+                      style={{
+                        minWidth: 48,
+                        textAlign: 'center',
+                        background: 'rgba(17,47,66,0.06)',
+                        borderRadius: 6,
+                        padding: '4px 6px',
+                      }}
+                    >
+                      <div style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>
+                        {new Date(s.scheduled_start).toLocaleDateString('en-GB', { weekday: 'short' })}
+                      </div>
+                      <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--color-primary)' }}>
+                        {new Date(s.scheduled_start).getDate()}
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>
+                        {s.batch_courses?.courses?.name}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+                        {s.batch_courses?.batches?.name} · {fmtTime(s.scheduled_start)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Notifications */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <MdNotifications color="var(--color-secondary)" /> Recent Notifications
+            </span>
+            <Link to="/lecturer/notifications" className="btn btn-ghost btn-sm">View All</Link>
+          </div>
+          <div className="card-body" style={{ padding: 0 }}>
+            {notifsLoading ? (
+              <div style={{ padding: '1rem' }}>
+                {[1, 2].map((i) => (
+                  <div key={i} style={{ marginBottom: 10 }}>
+                    <div className="skeleton skeleton-text" style={{ width: '80%', marginBottom: 4 }} />
+                    <div className="skeleton skeleton-text" style={{ width: '55%' }} />
+                  </div>
+                ))}
+              </div>
+            ) : notifications.length === 0 ? (
+              <div className="empty-state" style={{ padding: '2rem' }}>
+                <div className="empty-state-icon"><MdNotifications /></div>
+                <div className="empty-state-title">No notifications</div>
+                <p className="empty-state-text">You're all caught up!</p>
+              </div>
+            ) : (
+              <div>
+                {notifications.map((n) => (
+                  <div
+                    key={n.id}
+                    style={{
+                      padding: '0.875rem 1.25rem',
+                      borderBottom: '1px solid var(--color-border)',
+                      background: n.is_read ? 'transparent' : 'rgba(183,0,50,0.04)',
+                      display: 'flex',
+                      gap: '0.75rem',
+                      alignItems: 'flex-start',
+                    }}
+                  >
+                    {!n.is_read && (
+                      <div
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: 'var(--color-secondary)',
+                          flexShrink: 0,
+                          marginTop: 5,
+                        }}
+                      />
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: n.is_read ? 500 : 700, fontSize: '0.875rem', color: 'var(--color-text)' }}>
+                        {n.title}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                        {n.message}
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                        {fmtDate(n.created_at)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </AppLayout>
+  );
+}

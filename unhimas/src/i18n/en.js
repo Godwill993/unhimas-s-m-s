@@ -1,0 +1,37 @@
+export const en = {
+  common: {
+    dashboard: 'Dashboard',
+    save: 'Save',
+    cancel: 'Cancel',
+    submit: 'Submit',
+    approve: 'Approve',
+    return: 'Return',
+    publish: 'Publish',
+    students: 'Students',
+    lecturers: 'Lecturers',
+    departments: 'Departments',
+    courses: 'Courses',
+    settings: 'Settings',
+    notifications: 'Notifications',
+    logout: 'Logout',
+    search: 'Search...',
+    no_results: 'No results found',
+  },
+  auth: {
+    login: 'Login',
+    login_title: 'Sign in to your account',
+    email: 'Email',
+    password: 'Password',
+    forgot_password: 'Forgot Password?',
+    sign_in: 'Sign in',
+    unauthorized: 'You do not have permission to access this.',
+  },
+  academic: {
+    attendance: 'Attendance',
+    marks: 'Marks',
+    results: 'Results',
+    batches: 'Batches',
+    academic_years: 'Academic Years',
+    semesters: 'Semesters',
+  }
+};

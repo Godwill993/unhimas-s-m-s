@@ -1,0 +1,72 @@
+import { useState, useEffect, useCallback } from 'react';
+import { MdArrowUpward } from 'react-icons/md';
+import Sidebar from './Sidebar';
+import Header from './Header';
+import '../../styles/layout.css';
+
+export default function AppLayout({ children, pageTitle }) {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [scrollProgress, setScrollProgress] = useState(0);
+  const [showBackToTop, setShowBackToTop] = useState(false);
+
+  // Scroll progress + back-to-top
+  useEffect(() => {
+    const handleScroll = () => {
+      const el = document.documentElement;
+      const scrolled = el.scrollTop;
+      const total = el.scrollHeight - el.clientHeight;
+      setScrollProgress(total > 0 ? (scrolled / total) * 100 : 0);
+      setShowBackToTop(scrolled > 300);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToTop = useCallback(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  return (
+    <div className="app-shell">
+      {/* Scroll progress bar */}
+      <div
+        className="scroll-progress"
+        style={{ width: `${scrollProgress}%` }}
+        role="progressbar"
+        aria-hidden="true"
+      />
+
+      {/* Sidebar */}
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed(v => !v)}
+        mobileOpen={mobileOpen}
+        onMobileClose={() => setMobileOpen(false)}
+      />
+
+      {/* Main area */}
+      <div className={`main-area ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+        <Header
+          onMenuClick={() => setMobileOpen(v => !v)}
+          pageTitle={pageTitle}
+        />
+
+        <main id="main-content" className="page-content" tabIndex="-1">
+          {children}
+        </main>
+      </div>
+
+      {/* Back to top */}
+      <button
+        className={`back-to-top ${showBackToTop ? 'visible' : ''}`}
+        onClick={scrollToTop}
+        aria-label="Back to top"
+        title="Back to top"
+      >
+        <MdArrowUpward />
+      </button>
+    </div>
+  );
+}

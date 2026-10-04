@@ -1,0 +1,514 @@
+import { useState, useCallback } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
+import {
+  MdGrade,
+  MdSave,
+  MdSend,
+  MdWarning,
+  MdCheckCircle,
+  MdInfo,
+  MdClose,
+} from 'react-icons/md';
+import AppLayout from '../../components/layout/AppLayout';
+import { useAuth } from '../../context/AuthContext';
+import Modal from '../../components/common/Modal';
+import { useToast } from '../../components/common/Toast';
+import {
+  getMyLecturerProfile,
+  getMyCourses,
+  getOrCreateMarkSubmission,
+  getMarksForSubmission,
+  getStudentsInBatch,
+  upsertMark,
+  submitMarkSubmission,
+  resubmitMarkSubmission,
+} from '../../services/lecturerService';
+import { getSystemSettings } from '../../services/operationsService';
+
+// ─── Status badge ─────────────────────────────────────────────────────────────
+
+const STATUS_LABELS = {
+  draft: { cls: 'badge-gray', text: 'Draft — Not Submitted' },
+  submitted: { cls: 'badge-blue', text: 'Submitted — Pending Review' },
+  returned: { cls: 'badge-red', text: 'Returned — Needs Correction' },
+  approved: { cls: 'badge-green', text: 'Approved' },
+  published: { cls: 'badge-purple', text: 'Published' },
+};
+
+function StatusBanner({ submission }) {
+  if (!submission) return null;
+  const s = STATUS_LABELS[submission.status] || { cls: 'badge-gray', text: submission.status };
+  const isReturned = submission.status === 'returned';
+  return (
+    <div
+      style={{
+        padding: '0.875rem 1.25rem',
+        borderRadius: 'var(--radius-md)',
+        marginBottom: '1.25rem',
+        background: isReturned ? 'rgba(183,0,50,0.06)' : 'rgba(17,47,66,0.05)',
+        border: `1px solid ${isReturned ? 'rgba(183,0,50,0.25)' : 'var(--color-border)'}`,
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '0.75rem',
+      }}
+    >
+      {isReturned ? <MdWarning color="var(--color-secondary)" size={20} /> : <MdInfo color="var(--color-primary)" size={20} />}
+      <div>
+        <div style={{ fontWeight: 700, fontSize: '0.875rem', marginBottom: 4 }}>
+          <span className={`badge ${s.cls}`}>{s.text}</span>
+        </div>
+        {isReturned && submission.admin_comment && (
+          <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+            Administrator note: "{submission.admin_comment}"
+          </div>
+        )}
+        {submission.submitted_at && (
+          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+            Submitted: {new Date(submission.submitted_at).toLocaleString('en-GB')}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Score input ──────────────────────────────────────────────────────────────
+
+function ScoreInput({ value, onChange, max, disabled }) {
+  const num = Number(value);
+  const isOver = num > max;
+  const isNeg = num < 0;
+  const invalid = isOver || isNeg;
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        type="number"
+        min={0}
+        max={max}
+        step={0.5}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        style={{
+          width: 72,
+          padding: '0.375rem 0.5rem',
+          border: `1px solid ${invalid ? 'var(--color-secondary)' : 'var(--color-border)'}`,
+          borderRadius: 'var(--radius-sm)',
+          fontSize: '0.875rem',
+          background: disabled ? 'var(--color-bg)' : 'var(--color-surface)',
+          color: 'var(--color-text)',
+          outline: 'none',
+          textAlign: 'center',
+        }}
+        aria-label={`Score out of ${max}`}
+      />
+      {invalid && (
+        <div style={{ fontSize: '0.65rem', color: 'var(--color-secondary)', position: 'absolute', top: '100%', left: 0, whiteSpace: 'nowrap' }}>
+          {isNeg ? 'Min 0' : `Max ${max}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+export default function LecturerMarksPage() {
+  const { session, profile } = useAuth();
+  const [searchParams] = useSearchParams();
+  const initialBc = searchParams.get('bc') || '';
+  const qc = useQueryClient();
+  const { showToast } = useToast();
+
+  const [selectedBcId, setSelectedBcId] = useState(initialBc);
+  const [localScores, setLocalScores] = useState({});   // { studentId: { attendance_score, coursework_score, exam_score } }
+  const [submitModal, setSubmitModal] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Lecturer profile
+  const { data: lecturerProfile } = useQuery({
+    queryKey: ['my-lecturer-profile'],
+    queryFn: getMyLecturerProfile,
+    enabled: !!session,
+  });
+  const lecturerId = lecturerProfile?.id;
+
+  // System settings (for max scores)
+  const { data: settings } = useQuery({
+    queryKey: ['system-settings'],
+    queryFn: getSystemSettings,
+  });
+  const ATT_MAX = settings?.attendance_max ?? 5;
+  const CW_MAX = settings?.coursework_max ?? 25;
+  const EXAM_MAX = settings?.exam_max ?? 70;
+
+  // My courses
+  const { data: courses = [] } = useQuery({
+    queryKey: ['my-courses', lecturerId],
+    queryFn: () => getMyCourses(lecturerId),
+    enabled: !!lecturerId,
+  });
+
+  const selectedCourse = courses.find((c) => c.id === selectedBcId);
+
+  // Submission record
+  const {
+    data: submission,
+    isLoading: subLoading,
+    refetch: refetchSub,
+  } = useQuery({
+    queryKey: ['mark-submission', selectedBcId, lecturerId],
+    queryFn: () => getOrCreateMarkSubmission(selectedBcId, lecturerId),
+    enabled: !!selectedBcId && !!lecturerId,
+  });
+
+  // Students in batch
+  const { data: students = [], isLoading: stuLoading } = useQuery({
+    queryKey: ['students-in-batch', selectedCourse?.batches?.id],
+    queryFn: () => getStudentsInBatch(selectedCourse.batches.id),
+    enabled: !!selectedCourse?.batches?.id,
+  });
+
+  // Existing marks
+  const { data: existingMarks = [], isLoading: marksLoading, refetch: refetchMarks } = useQuery({
+    queryKey: ['marks-for-submission', submission?.id],
+    queryFn: () => getMarksForSubmission(submission.id),
+    enabled: !!submission?.id,
+    onSuccess: (data) => {
+      // Initialize localScores from DB data
+      const init = {};
+      data.forEach((m) => {
+        init[m.student_id] = {
+          attendance_score: m.attendance_score,
+          coursework_score: m.coursework_score,
+          exam_score: m.exam_score,
+          lecturer_comment: m.lecturer_comment || '',
+        };
+      });
+      setLocalScores(init);
+    },
+  });
+
+  const canEdit = submission && (submission.status === 'draft' || submission.status === 'returned');
+
+  // Upsert a single mark
+  const saveOneMark = useCallback(async (studentId) => {
+    if (!submission?.id || !canEdit) return;
+    const scores = localScores[studentId] || {};
+    setSaving(true);
+    try {
+      await upsertMark({
+        mark_submission_id: submission.id,
+        student_id: studentId,
+        attendance_score: scores.attendance_score ?? 0,
+        coursework_score: scores.coursework_score ?? 0,
+        exam_score: scores.exam_score ?? 0,
+        lecturer_comment: scores.lecturer_comment || null,
+      });
+      showToast('Mark saved', 'success');
+      refetchMarks();
+    } catch (err) {
+      showToast(err.message || 'Failed to save mark', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }, [submission, canEdit, localScores, showToast, refetchMarks]);
+
+  // Save all marks in sequence
+  const saveAllMarks = async () => {
+    if (!submission?.id || !canEdit || students.length === 0) return;
+    setSaving(true);
+    try {
+      for (const stu of students) {
+        const scores = localScores[stu.id] || { attendance_score: 0, coursework_score: 0, exam_score: 0 };
+        await upsertMark({
+          mark_submission_id: submission.id,
+          student_id: stu.id,
+          attendance_score: scores.attendance_score ?? 0,
+          coursework_score: scores.coursework_score ?? 0,
+          exam_score: scores.exam_score ?? 0,
+          lecturer_comment: scores.lecturer_comment || null,
+        });
+      }
+      showToast('All marks saved successfully', 'success');
+      refetchMarks();
+    } catch (err) {
+      showToast(err.message || 'Failed to save marks', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Submit
+  const submitMutation = useMutation({
+    mutationFn: async () => {
+      await saveAllMarks();
+      if (submission.status === 'returned') {
+        return resubmitMarkSubmission(submission.id);
+      }
+      return submitMarkSubmission(submission.id);
+    },
+    onSuccess: () => {
+      showToast('Marks submitted for review', 'success');
+      setSubmitModal(false);
+      refetchSub();
+      qc.invalidateQueries(['my-mark-submissions']);
+    },
+    onError: (err) => {
+      showToast(err.message || 'Submission failed', 'error');
+    },
+  });
+
+  const updateScore = (studentId, field, val) => {
+    setLocalScores((prev) => ({
+      ...prev,
+      [studentId]: { ...(prev[studentId] || {}), [field]: val },
+    }));
+  };
+
+  const getTotal = (studentId) => {
+    const s = localScores[studentId] || {};
+    return (Number(s.attendance_score) || 0) + (Number(s.coursework_score) || 0) + (Number(s.exam_score) || 0);
+  };
+
+  const getGrade = (total) => {
+    if (total >= 80) return { grade: 'A', gp: 4.0, cls: 'badge-green' };
+    if (total >= 70) return { grade: 'B', gp: 3.0, cls: 'badge-blue' };
+    if (total >= 60) return { grade: 'C', gp: 2.0, cls: 'badge-amber' };
+    if (total >= 50) return { grade: 'D', gp: 1.0, cls: 'badge-amber' };
+    return { grade: 'F', gp: 0.0, cls: 'badge-red' };
+  };
+
+  const hasErrors = students.some((stu) => {
+    const s = localScores[stu.id] || {};
+    return (
+      Number(s.attendance_score) > ATT_MAX ||
+      Number(s.coursework_score) > CW_MAX ||
+      Number(s.exam_score) > EXAM_MAX ||
+      Number(s.attendance_score) < 0 ||
+      Number(s.coursework_score) < 0 ||
+      Number(s.exam_score) < 0
+    );
+  });
+
+  const loading = subLoading || stuLoading || marksLoading;
+
+  return (
+    <AppLayout pageTitle="Mark Entry">
+      <div className="page-header">
+        <div className="page-header-left">
+          <h1 className="page-title">Mark Entry</h1>
+          <p className="page-subtitle">Enter and submit student marks for your courses</p>
+        </div>
+      </div>
+
+      {/* Course selector */}
+      <div className="card" style={{ marginBottom: '1.25rem', padding: '1.25rem' }}>
+        <label className="form-label" htmlFor="bc-select">Select Course</label>
+        <select
+          id="bc-select"
+          className="form-input"
+          style={{ maxWidth: 400 }}
+          value={selectedBcId}
+          onChange={(e) => {
+            setSelectedBcId(e.target.value);
+            setLocalScores({});
+          }}
+        >
+          <option value="">— Select a course —</option>
+          {courses.map((bc) => (
+            <option key={bc.id} value={bc.id}>
+              {bc.courses?.code} — {bc.courses?.name} ({bc.batches?.name}, Sem {bc.semesters?.number})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {!selectedBcId && (
+        <div className="empty-state">
+          <div className="empty-state-icon"><MdGrade /></div>
+          <div className="empty-state-title">Select a course above</div>
+          <p className="empty-state-text">Choose one of your assigned courses to enter marks.</p>
+        </div>
+      )}
+
+      {selectedBcId && (
+        <>
+          {/* Status banner */}
+          {!loading && <StatusBanner submission={submission} />}
+
+          {/* Score legend */}
+          <div
+            style={{
+              display: 'flex',
+              gap: '1rem',
+              marginBottom: '1rem',
+              flexWrap: 'wrap',
+              fontSize: '0.8125rem',
+              color: 'var(--color-text-muted)',
+              padding: '0.75rem 1rem',
+              background: 'var(--color-surface)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            <span><strong>Attendance:</strong> / {ATT_MAX}</span>
+            <span><strong>Coursework:</strong> / {CW_MAX}</span>
+            <span><strong>Exam:</strong> / {EXAM_MAX}</span>
+            <span><strong>Total:</strong> / 100</span>
+          </div>
+
+          {/* Actions */}
+          {canEdit && (
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', justifyContent: 'flex-end' }}>
+              <button className="btn btn-outline btn-sm" onClick={saveAllMarks} disabled={saving || hasErrors}>
+                <MdSave /> {saving ? 'Saving…' : 'Save All'}
+              </button>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => setSubmitModal(true)}
+                disabled={saving || hasErrors || students.length === 0}
+              >
+                <MdSend /> Submit for Review
+              </button>
+            </div>
+          )}
+
+          {hasErrors && (
+            <div className="auth-alert error" style={{ marginBottom: '1rem' }}>
+              <MdWarning />
+              Some scores exceed the maximum or are negative. Please correct them before saving.
+            </div>
+          )}
+
+          {/* Marks table */}
+          {loading ? (
+            <div className="card">
+              <div style={{ padding: '1.5rem' }}>
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} style={{ marginBottom: 12 }}>
+                    <div className="skeleton skeleton-text" style={{ width: '60%', marginBottom: 6 }} />
+                    <div className="skeleton skeleton-text" style={{ width: '40%' }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : students.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon"><MdGrade /></div>
+              <div className="empty-state-title">No students in this batch</div>
+            </div>
+          ) : (
+            <div className="card">
+              <div className="table-wrapper">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Matricule</th>
+                      <th>Student Name</th>
+                      <th>Attendance /{ATT_MAX}</th>
+                      <th>Coursework /{CW_MAX}</th>
+                      <th>Exam /{EXAM_MAX}</th>
+                      <th>Total /100</th>
+                      <th>Grade</th>
+                      {canEdit && <th>Action</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {students.map((stu) => {
+                      const total = getTotal(stu.id);
+                      const { grade, gp, cls } = getGrade(total);
+                      const scores = localScores[stu.id] || {};
+                      return (
+                        <tr key={stu.id}>
+                          <td>
+                            <span className="badge badge-blue">{stu.matricule}</span>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: 600 }}>{stu.first_name} {stu.middle_name ? `${stu.middle_name.charAt(0)}. ` : ''}{stu.last_name}</div>
+                          </td>
+                          <td>
+                            <ScoreInput
+                              value={scores.attendance_score ?? 0}
+                              onChange={(v) => updateScore(stu.id, 'attendance_score', v)}
+                              max={ATT_MAX}
+                              disabled={!canEdit}
+                            />
+                          </td>
+                          <td>
+                            <ScoreInput
+                              value={scores.coursework_score ?? 0}
+                              onChange={(v) => updateScore(stu.id, 'coursework_score', v)}
+                              max={CW_MAX}
+                              disabled={!canEdit}
+                            />
+                          </td>
+                          <td>
+                            <ScoreInput
+                              value={scores.exam_score ?? 0}
+                              onChange={(v) => updateScore(stu.id, 'exam_score', v)}
+                              max={EXAM_MAX}
+                              disabled={!canEdit}
+                            />
+                          </td>
+                          <td>
+                            <strong style={{ fontSize: '1rem', color: grade === 'F' ? 'var(--color-secondary)' : 'var(--color-text)' }}>
+                              {total.toFixed(1)}
+                            </strong>
+                          </td>
+                          <td>
+                            <span className={`badge ${cls}`}>{grade} ({gp})</span>
+                          </td>
+                          {canEdit && (
+                            <td>
+                              <button
+                                className="btn btn-outline btn-sm"
+                                onClick={() => saveOneMark(stu.id)}
+                                disabled={saving}
+                              >
+                                <MdSave />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Submit Modal */}
+          {submitModal && (
+            <Modal title="Submit Marks for Review" onClose={() => setSubmitModal(false)}>
+              <div>
+                <p style={{ marginBottom: '1rem', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
+                  You are about to submit marks for{' '}
+                  <strong>{selectedCourse?.courses?.code} — {selectedCourse?.courses?.name}</strong>.
+                </p>
+                <div className="auth-alert" style={{ borderRadius: 'var(--radius-sm)', background: 'rgba(17,47,66,0.06)', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}>
+                  <MdInfo />
+                  After submission, you will not be able to edit marks until the administrator returns them.
+                </div>
+                <div className="modal-footer" style={{ marginTop: '1.5rem', padding: 0 }}>
+                  <button className="btn btn-outline" onClick={() => setSubmitModal(false)} disabled={submitMutation.isPending}>
+                    <MdClose /> Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => submitMutation.mutate()}
+                    disabled={submitMutation.isPending}
+                  >
+                    <MdSend /> {submitMutation.isPending ? 'Submitting…' : 'Confirm Submission'}
+                  </button>
+                </div>
+              </div>
+            </Modal>
+          )}
+        </>
+      )}
+    </AppLayout>
+  );
+}
