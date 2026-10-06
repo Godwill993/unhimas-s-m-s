@@ -6,14 +6,13 @@ import {
   MdSave,
   MdSend,
   MdWarning,
-  MdCheckCircle,
   MdInfo,
   MdClose,
 } from 'react-icons/md';
 import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import Modal from '../../components/common/Modal';
-import { useToast } from '../../components/common/Toast';
+import { useToast } from '../../hooks/useToast';
 import {
   getMyLecturerProfile,
   getMyCourses,
@@ -115,7 +114,7 @@ function ScoreInput({ value, onChange, max, disabled }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function LecturerMarksPage() {
-  const { session, profile } = useAuth();
+  const { session } = useAuth();
   const [searchParams] = useSearchParams();
   const initialBc = searchParams.get('bc') || '';
   const qc = useQueryClient();
@@ -171,7 +170,7 @@ export default function LecturerMarksPage() {
   });
 
   // Existing marks
-  const { data: existingMarks = [], isLoading: marksLoading, refetch: refetchMarks } = useQuery({
+  const { isLoading: marksLoading, refetch: refetchMarks } = useQuery({
     queryKey: ['marks-for-submission', submission?.id],
     queryFn: () => getMarksForSubmission(submission.id),
     enabled: !!submission?.id,

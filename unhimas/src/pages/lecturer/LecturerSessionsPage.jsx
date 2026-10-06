@@ -5,14 +5,13 @@ import {
   MdHowToReg,
   MdAdd,
   MdCheckCircle,
-  MdCancel,
   MdSchedule,
   MdPeopleAlt,
 } from 'react-icons/md';
 import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import Modal from '../../components/common/Modal';
-import { useToast } from '../../components/common/Toast';
+import { useToast } from '../../hooks/useToast';
 import {
   getMyLecturerProfile,
   getMyCourses,
@@ -42,19 +41,18 @@ function fmtDT(iso) {
 
 export default function LecturerSessionsPage() {
   const { session, profile } = useAuth();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const initialBc = searchParams.get('bc') || '';
-  const qc = useQueryClient();
+  const initialSession = searchParams.get('session') || null;
   const { showToast } = useToast();
 
   const [selectedBcId, setSelectedBcId] = useState(initialBc);
-  const [selectedSessionId, setSelectedSessionId] = useState(null);
+  const [selectedSessionId, setSelectedSessionId] = useState(initialSession);
   const [newSessionModal, setNewSessionModal] = useState(false);
   const [newSessionForm, setNewSessionForm] = useState({
     scheduled_start: '', scheduled_end: '', room: '', topic: '', notes: '',
   });
-  const [localAttendance, setLocalAttendance] = useState({});
-  const [markingAll, setMarkingAll] = useState(false);
 
   const { data: lecturerProfile } = useQuery({
     queryKey: ['my-lecturer-profile'],
@@ -63,7 +61,7 @@ export default function LecturerSessionsPage() {
   });
   const lecturerId = lecturerProfile?.id;
 
-  const { data: courses = [] } = useQuery({
+  const { data: courses = [], isLoading: coursesLoading, error: coursesError } = useQuery({
     queryKey: ['my-courses', lecturerId],
     queryFn: () => getMyCourses(lecturerId),
     enabled: !!lecturerId,
@@ -71,28 +69,90 @@ export default function LecturerSessionsPage() {
 
   const selectedCourse = courses.find((c) => c.id === selectedBcId);
 
-  const { data: sessions = [], isLoading: sessLoading, refetch: refetchSessions } = useQuery({
-    queryKey: ['sessions-for-bc', selectedBcId],
-    queryFn: () => getSessionsForBatchCourse(selectedBcId),
-    enabled: !!selectedBcId,
+  const { data: sessions = [], isLoading: sessLoading, error: sessionsError, refetch: refetchSessions } = useQuery({
+    queryKey: ['sessions-for-bc', selectedBcId, lecturerId],
+    queryFn: () => getSessionsForBatchCourse(selectedBcId, lecturerId),
+    enabled: !!selectedBcId && !!lecturerId,
   });
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
+  const activeSessionId = selectedCourse && selectedSession ? selectedSession.id : null;
 
-  const { data: students = [] } = useQuery({
+  const { data: students = [], isLoading: studentsLoading, error: studentsError } = useQuery({
     queryKey: ['students-in-batch', selectedCourse?.batches?.id],
     queryFn: () => getStudentsInBatch(selectedCourse.batches.id),
     enabled: !!selectedCourse?.batches?.id,
   });
 
-  const { data: attendance = [], isLoading: attLoading, refetch: refetchAtt } = useQuery({
-    queryKey: ['attendance-session', selectedSessionId],
-    queryFn: () => getAttendanceForSession(selectedSessionId),
-    enabled: !!selectedSessionId,
-    onSuccess: (data) => {
-      const init = {};
-      data.forEach((r) => { init[r.student_id] = r.status; });
-      setLocalAttendance(init);
+  const attendanceQueryKey = ['attendance-session', activeSessionId];
+  const { data: attendanceRecords = [], isLoading: attLoading, error: attendanceError } = useQuery({
+    queryKey: attendanceQueryKey,
+    queryFn: () => getAttendanceForSession(activeSessionId),
+    enabled: !!activeSessionId,
+  });
+
+  const attendanceByStudent = new Map(attendanceRecords.map((record) => [record.student_id, record]));
+
+  const saveAttendanceMutation = useMutation({
+    mutationFn: upsertAttendance,
+    onMutate: async (nextRecord) => {
+      await queryClient.cancelQueries({ queryKey: attendanceQueryKey });
+      const previousRecords = queryClient.getQueryData(attendanceQueryKey);
+      queryClient.setQueryData(attendanceQueryKey, (current = []) => {
+        const updated = {
+          ...(current.find((record) => record.student_id === nextRecord.student_id) || {}),
+          ...nextRecord,
+          marked_at: new Date().toISOString(),
+        };
+        const exists = current.some((record) => record.student_id === nextRecord.student_id);
+        return exists
+          ? current.map((record) => record.student_id === nextRecord.student_id ? updated : record)
+          : [...current, updated];
+      });
+      return { previousRecords };
+    },
+    onError: (error, _nextRecord, context) => {
+      if (context?.previousRecords) queryClient.setQueryData(attendanceQueryKey, context.previousRecords);
+      showToast(error.message || 'Attendance could not be saved.', 'error');
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: attendanceQueryKey });
+      queryClient.invalidateQueries({ queryKey: ['my-attendance-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['student-dashboard-stats'] });
+    },
+  });
+
+  const markAllMutation = useMutation({
+    mutationFn: () => markAllPresent(activeSessionId, students.map((student) => student.id), profile?.id),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: attendanceQueryKey });
+      const previousRecords = queryClient.getQueryData(attendanceQueryKey);
+      queryClient.setQueryData(attendanceQueryKey, (current = []) => {
+        const now = new Date().toISOString();
+        const byStudent = new Map(current.map((record) => [record.student_id, record]));
+        students.forEach((student) => {
+          byStudent.set(student.id, {
+            ...(byStudent.get(student.id) || {}),
+            session_id: activeSessionId,
+            student_id: student.id,
+            status: 'present',
+            marked_at: now,
+            marked_by: profile?.id || null,
+          });
+        });
+        return Array.from(byStudent.values());
+      });
+      return { previousRecords };
+    },
+    onSuccess: () => showToast('All students marked present.', 'success'),
+    onError: (error, _variables, context) => {
+      if (context?.previousRecords) queryClient.setQueryData(attendanceQueryKey, context.previousRecords);
+      showToast(error.message || 'Attendance could not be saved.', 'error');
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: attendanceQueryKey });
+      queryClient.invalidateQueries({ queryKey: ['my-attendance-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['student-dashboard-stats'] });
     },
   });
 
@@ -111,38 +171,23 @@ export default function LecturerSessionsPage() {
     onError: (err) => showToast(err.message || 'Failed to create session', 'error'),
   });
 
-  const markAllPresentFn = async () => {
-    if (!selectedSessionId || students.length === 0) return;
-    setMarkingAll(true);
-    try {
-      await markAllPresent(selectedSessionId, students.map((s) => s.id), profile?.id);
-      const newAtt = {};
-      students.forEach((s) => { newAtt[s.id] = 'present'; });
-      setLocalAttendance(newAtt);
-      showToast('All students marked present', 'success');
-      refetchAtt();
-    } catch (err) {
-      showToast(err.message || 'Failed', 'error');
-    } finally {
-      setMarkingAll(false);
-    }
+  const markAllPresentFn = () => {
+    if (!activeSessionId || students.length === 0) return;
+    markAllMutation.mutate();
   };
 
-  const saveAttendance = async (studentId, status) => {
-    if (!selectedSessionId) return;
-    setLocalAttendance((prev) => ({ ...prev, [studentId]: status }));
-    try {
-      await upsertAttendance({ session_id: selectedSessionId, student_id: studentId, status, marked_by: profile?.id });
-    } catch (err) {
-      showToast('Failed to save: ' + (err.message || ''), 'error');
-    }
+  const saveAttendance = (studentId, status) => {
+    if (!activeSessionId) return;
+    saveAttendanceMutation.mutate({ session_id: activeSessionId, student_id: studentId, status, marked_by: profile?.id });
   };
 
   // Summary
   const totalStu = students.length;
-  const present = Object.values(localAttendance).filter((s) => s === 'present').length;
-  const absent = Object.values(localAttendance).filter((s) => s === 'absent').length;
-  const late = Object.values(localAttendance).filter((s) => s === 'late').length;
+  const present = attendanceRecords.filter((record) => record.status === 'present' && record.marked_at).length;
+  const absent = attendanceRecords.filter((record) => record.status === 'absent' && record.marked_at).length;
+  const late = attendanceRecords.filter((record) => record.status === 'late' && record.marked_at).length;
+  const excused = attendanceRecords.filter((record) => record.status === 'excused' && record.marked_at).length;
+  const unrecorded = students.filter((student) => !attendanceByStudent.get(student.id)?.marked_at).length;
   const pct = totalStu > 0 ? Math.round(((present + late) / totalStu) * 100) : 0;
 
   return (
@@ -155,6 +200,11 @@ export default function LecturerSessionsPage() {
       </div>
 
       {/* Course selector */}
+      {coursesError && (
+        <div className="auth-alert error" role="alert" style={{ marginBottom: '1rem' }}>
+          Assigned courses could not be loaded. Check your connection or account permissions.
+        </div>
+      )}
       <div className="card" style={{ marginBottom: '1.25rem', padding: '1.25rem' }}>
         <label className="form-label" htmlFor="sess-bc-select">Select Course</label>
         <select
@@ -163,8 +213,9 @@ export default function LecturerSessionsPage() {
           style={{ maxWidth: 420 }}
           value={selectedBcId}
           onChange={(e) => { setSelectedBcId(e.target.value); setSelectedSessionId(null); }}
+          disabled={coursesLoading}
         >
-          <option value="">— Select a course —</option>
+          <option value="">{coursesLoading ? 'Loading assigned courses…' : '— Select a course —'}</option>
           {courses.map((bc) => (
             <option key={bc.id} value={bc.id}>
               {bc.courses?.code} — {bc.courses?.name} ({bc.batches?.name}, Sem {bc.semesters?.number})
@@ -174,12 +225,16 @@ export default function LecturerSessionsPage() {
       </div>
 
       {selectedBcId && (
-        <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '1.25rem' }}>
+        <div className="lecturer-attendance-layout">
           {/* Sessions list */}
           <div className="card" style={{ alignSelf: 'start' }}>
             <div className="card-header">
               <span className="card-title">Sessions</span>
-              <button className="btn btn-primary btn-sm" onClick={() => setNewSessionModal(true)}>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => setNewSessionModal(true)}
+                disabled={!selectedCourse || !lecturerId || !!sessionsError}
+              >
                 <MdAdd /> New
               </button>
             </div>
@@ -189,6 +244,11 @@ export default function LecturerSessionsPage() {
                   {[1, 2, 3].map((i) => (
                     <div key={i} className="skeleton skeleton-text" style={{ marginBottom: 10, height: 48 }} />
                   ))}
+                </div>
+              ) : sessionsError ? (
+                <div className="empty-state" role="alert" style={{ padding: '1.5rem' }}>
+                  <div className="empty-state-title">Sessions unavailable</div>
+                  <p className="empty-state-text">Sessions could not be loaded for this assigned course.</p>
                 </div>
               ) : sessions.length === 0 ? (
                 <div className="empty-state" style={{ padding: '1.5rem' }}>
@@ -230,7 +290,7 @@ export default function LecturerSessionsPage() {
 
           {/* Attendance panel */}
           <div>
-            {!selectedSessionId ? (
+            {!activeSessionId ? (
               <div className="card">
                 <div className="empty-state" style={{ padding: '3rem' }}>
                   <div className="empty-state-icon"><MdHowToReg /></div>
@@ -244,7 +304,7 @@ export default function LecturerSessionsPage() {
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(4, 1fr)',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(95px, 1fr))',
                     gap: '0.75rem',
                     marginBottom: '1rem',
                   }}
@@ -253,6 +313,9 @@ export default function LecturerSessionsPage() {
                     { label: 'Total', value: totalStu, color: 'var(--color-primary)' },
                     { label: 'Present', value: present, color: '#059669' },
                     { label: 'Absent', value: absent, color: 'var(--color-secondary)' },
+                    { label: 'Late', value: late, color: '#b45309' },
+                    { label: 'Excused', value: excused, color: 'var(--color-text-muted)' },
+                    { label: 'Not marked', value: unrecorded, color: 'var(--color-text-muted)' },
                     { label: 'Attendance', value: `${pct}%`, color: pct >= 75 ? '#059669' : '#b45309' },
                   ].map((item) => (
                     <div
@@ -280,9 +343,9 @@ export default function LecturerSessionsPage() {
                     <button
                       className="btn btn-outline btn-sm"
                       onClick={markAllPresentFn}
-                      disabled={markingAll || students.length === 0}
+                      disabled={markAllMutation.isPending || students.length === 0 || studentsLoading || attLoading}
                     >
-                      <MdCheckCircle /> {markingAll ? 'Marking…' : 'Mark All Present'}
+                      <MdCheckCircle /> {markAllMutation.isPending ? 'Marking…' : 'Mark All Present'}
                     </button>
                   </div>
                   <div className="table-wrapper">
@@ -291,6 +354,20 @@ export default function LecturerSessionsPage() {
                         {[1, 2, 3].map((i) => (
                           <div key={i} className="skeleton skeleton-text" style={{ marginBottom: 10 }} />
                         ))}
+                      </div>
+                    ) : attendanceError ? (
+                      <div className="empty-state" role="alert">
+                        <div className="empty-state-title">Attendance unavailable</div>
+                        <p className="empty-state-text">Attendance records could not be loaded. No default statuses are assumed.</p>
+                      </div>
+                    ) : studentsError ? (
+                      <div className="empty-state" role="alert">
+                        <div className="empty-state-title">Student list unavailable</div>
+                        <p className="empty-state-text">Students in this batch could not be loaded.</p>
+                      </div>
+                    ) : studentsLoading ? (
+                      <div style={{ padding: '1rem' }}>
+                        {[1, 2, 3].map((i) => <div key={i} className="skeleton skeleton-text" style={{ marginBottom: 10 }} />)}
                       </div>
                     ) : students.length === 0 ? (
                       <div className="empty-state"><div className="empty-state-title">No students in batch</div></div>
@@ -305,7 +382,10 @@ export default function LecturerSessionsPage() {
                         </thead>
                         <tbody>
                           {students.map((stu) => {
-                            const status = localAttendance[stu.id] || 'absent';
+                            const attendanceRecord = attendanceByStudent.get(stu.id);
+                            const status = attendanceRecord?.marked_at ? attendanceRecord.status : null;
+                            const isSaving = saveAttendanceMutation.isPending
+                              && saveAttendanceMutation.variables?.student_id === stu.id;
                             return (
                               <tr key={stu.id}>
                                 <td><span className="badge badge-blue">{stu.matricule}</span></td>
@@ -319,14 +399,17 @@ export default function LecturerSessionsPage() {
                                         style={{
                                           padding: '0.25rem 0.625rem',
                                           fontSize: '0.75rem',
-                                          opacity: status === opt ? 1 : 0.6,
+                                          opacity: status === opt ? 1 : 0.75,
                                         }}
                                         onClick={() => saveAttendance(stu.id, opt)}
+                                        disabled={saveAttendanceMutation.isPending}
                                         aria-pressed={status === opt}
                                       >
                                         {STATUS_STYLE[opt].label}
                                       </button>
                                     ))}
+                                    {isSaving && <span className="form-hint" role="status">Saving…</span>}
+                                    {!attendanceRecord && <span className="form-hint">Not marked</span>}
                                   </div>
                                 </td>
                               </tr>
@@ -352,13 +435,14 @@ export default function LecturerSessionsPage() {
 
       {/* New Session Modal */}
       {newSessionModal && (
-        <Modal title="Create Class Session" onClose={() => setNewSessionModal(false)}>
+        <Modal isOpen={newSessionModal} title="Create Class Session" onClose={() => setNewSessionModal(false)}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div className="form-group">
               <label className="form-label">Start Time *</label>
               <input
                 type="datetime-local"
                 className="form-input"
+                required
                 value={newSessionForm.scheduled_start}
                 onChange={(e) => setNewSessionForm((f) => ({ ...f, scheduled_start: e.target.value }))}
               />
@@ -368,6 +452,7 @@ export default function LecturerSessionsPage() {
               <input
                 type="datetime-local"
                 className="form-input"
+                required
                 value={newSessionForm.scheduled_end}
                 onChange={(e) => setNewSessionForm((f) => ({ ...f, scheduled_end: e.target.value }))}
               />
@@ -403,10 +488,19 @@ export default function LecturerSessionsPage() {
             </div>
             <div className="modal-footer" style={{ padding: 0 }}>
               <button className="btn btn-outline" onClick={() => setNewSessionModal(false)}>Cancel</button>
+              {newSessionForm.scheduled_start && newSessionForm.scheduled_end
+                && new Date(newSessionForm.scheduled_end) <= new Date(newSessionForm.scheduled_start) && (
+                  <span className="form-error" role="alert">End time must be later than start time.</span>
+                )}
               <button
                 className="btn btn-primary"
                 onClick={() => createSessionMutation.mutate()}
-                disabled={createSessionMutation.isPending || !newSessionForm.scheduled_start || !newSessionForm.scheduled_end}
+                disabled={
+                  createSessionMutation.isPending
+                  || !newSessionForm.scheduled_start
+                  || !newSessionForm.scheduled_end
+                  || new Date(newSessionForm.scheduled_end) <= new Date(newSessionForm.scheduled_start)
+                }
               >
                 <MdAdd /> {createSessionMutation.isPending ? 'Creating…' : 'Create Session'}
               </button>

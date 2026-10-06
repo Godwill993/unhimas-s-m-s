@@ -11,7 +11,7 @@ export default function StudentCoursesPage() {
 
   const { data: studentProfile } = useQuery({
     queryKey: ['my-student-profile'],
-    queryFn: () => import('../../services/studentService').then((m) => m.getMyStudentProfile()),
+    queryFn: getMyStudentProfile,
     enabled: !!session,
   });
 

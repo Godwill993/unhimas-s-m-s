@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { MdAdd, MdPersonPin, MdSearch, MdEdit, MdToggleOn, MdToggleOff, MdEmail, MdPhone } from 'react-icons/md';
+import { MdAdd, MdPersonPin, MdSearch, MdEdit, MdToggleOn, MdToggleOff, MdEmail, MdPhone, MdPersonAdd } from 'react-icons/md';
 import AppLayout from '../../components/layout/AppLayout';
 import Modal from '../../components/common/Modal';
 import { toast } from '../../components/common/Toast';
@@ -10,6 +10,7 @@ import {
   updateLecturer,
 } from '../../services/peopleService';
 import { getDepartments } from '../../services/academicService';
+import { provisionSchoolAccount } from '../../services/auth';
 
 export default function LecturersPage() {
   const queryClient = useQueryClient();
@@ -62,6 +63,15 @@ export default function LecturersPage() {
     onError: (err) => {
       toast.error(err.message || 'Failed to update lecturer');
     },
+  });
+
+  const inviteMutation = useMutation({
+    mutationFn: (lecturerId) => provisionSchoolAccount({ recordType: 'lecturer', recordId: lecturerId }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-lecturers'] });
+      toast.success(result.message || 'Lecturer invitation sent');
+    },
+    onError: (err) => toast.error(err.message || 'Could not send lecturer invitation'),
   });
 
   const handleOpenAdd = () => {
@@ -259,9 +269,19 @@ export default function LecturersPage() {
                         <button
                           className="btn-icon"
                           title="Edit lecturer"
+                          aria-label={`Edit lecturer ${lec.staff_id}`}
                           onClick={() => handleOpenEdit(lec)}
                         >
                           <MdEdit />
+                        </button>
+                        <button
+                          className="btn-icon"
+                          title={lec.profile_id ? 'Lecturer already has a login account' : !lec.email ? 'Add an email before sending an invitation' : 'Send login invitation'}
+                          aria-label={`Send login invitation to ${lec.staff_id}`}
+                          disabled={inviteMutation.isPending || !lec.is_active || Boolean(lec.profile_id) || !lec.email}
+                          onClick={() => inviteMutation.mutate(lec.id)}
+                        >
+                          <MdPersonAdd />
                         </button>
                         <button
                           className="btn-icon"

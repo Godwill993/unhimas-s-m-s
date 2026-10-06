@@ -99,21 +99,23 @@ export async function getMyAttendanceSummary(studentId, batchId) {
 
   const summary = await Promise.all(
     batchCourses.map(async (bc) => {
-      const { data: sessions } = await supabase
+      const { data: sessions, error: sessionsError } = await supabase
         .from('class_sessions')
         .select('id')
         .eq('batch_course_id', bc.id);
+      if (sessionsError) throw sessionsError;
 
       const sessionIds = (sessions || []).map((s) => s.id);
       if (!sessionIds.length) {
         return { ...bc, totalSessions: 0, present: 0, absent: 0, late: 0, percentage: 0 };
       }
 
-      const { data: records } = await supabase
+      const { data: records, error: recordsError } = await supabase
         .from('attendance')
         .select('status')
         .eq('student_id', studentId)
         .in('session_id', sessionIds);
+      if (recordsError) throw recordsError;
 
       let present = 0, absent = 0, late = 0;
       (records || []).forEach((r) => {
@@ -220,17 +222,84 @@ export async function getMyAnnouncements(batchId, departmentId) {
     .order('published_at', { ascending: false })
     .limit(20);
 
-  // Get announcements that apply to this student: global (no batch/dept), their batch, or their dept
-  // We need to combine: no filters OR batch_id = batchId OR department_id = departmentId
+  // Match only global, this student's batch, or this student's department.
   if (batchId && departmentId) {
-    query = query.or(`batch_id.is.null,batch_id.eq.${batchId},department_id.eq.${departmentId}`);
+    query = query.or(`and(batch_id.is.null,department_id.is.null),batch_id.eq.${batchId},department_id.eq.${departmentId}`);
   } else if (batchId) {
-    query = query.or(`batch_id.is.null,batch_id.eq.${batchId}`);
+    query = query.or(`and(batch_id.is.null,department_id.is.null),batch_id.eq.${batchId}`);
   } else {
-    query = query.is('batch_id', null);
+    query = query.is('batch_id', null).is('department_id', null);
   }
 
   const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+// ============================================================
+// COURSE RESOURCES
+// ============================================================
+
+export async function getStudentResources(batchId, departmentId) {
+  if (!batchId || !departmentId) return [];
+
+  const { data, error } = await supabase
+    .from('resources')
+    .select(`
+      id, title, description, course_id, batch_id, file_path, file_name,
+      mime_type, created_at,
+      course:course_id (id, code, name)
+    `)
+    .or(`batch_id.eq.${batchId},course_id.in.(select course_id from batch_courses where batch_id.eq.${batchId})`)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getStudentResourceDownload(filePath) {
+  const { data, error } = await supabase.storage.from('resources').createSignedUrl(filePath, 60);
+  if (error) throw error;
+  if (!data?.signedUrl) {
+    throw new Error('No signed URL returned for this resource.');
+  }
+  return { url: data.signedUrl, error: null };
+}
+
+// ============================================================
+// UPCOMING CLASS SESSIONS
+// ============================================================
+
+export async function getMyUpcomingSessions(batchId, { limit = 5 } = {}) {
+  const { data: batchCourses, error: coursesError } = await supabase
+    .from('batch_courses')
+    .select('id')
+    .eq('batch_id', batchId);
+  if (coursesError) throw coursesError;
+
+  const batchCourseIds = (batchCourses || []).map((course) => course.id);
+  if (batchCourseIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('class_sessions')
+    .select(`
+      id,
+      batch_course_id,
+      scheduled_start,
+      scheduled_end,
+      room,
+      topic,
+      batch_courses:batch_course_id (
+        id,
+        courses:course_id (code, name),
+        lecturers:lecturer_id (first_name, last_name)
+      )
+    `)
+    .in('batch_course_id', batchCourseIds)
+    .gte('scheduled_start', new Date().toISOString())
+    .order('scheduled_start', { ascending: true })
+    .limit(limit);
+
   if (error) throw error;
   return data || [];
 }
@@ -261,56 +330,79 @@ export async function markStudentNotificationRead(notificationId) {
   return data;
 }
 
+export async function markAllStudentNotificationsRead(profileId) {
+  const { error } = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('recipient_id', profileId)
+    .eq('is_read', false);
+  if (error) throw error;
+}
+
 // ============================================================
 // STUDENT DASHBOARD STATS
 // ============================================================
 
 export async function getStudentDashboardStats(studentId, batchId, profileId) {
-  const [coursesRes, unreadNotifsRes] = await Promise.all([
+  const [coursesRes, unreadNotifsRes, currentYearRes, overallGpaRes, attendanceRes, resultsRes, settingsRes] = await Promise.all([
     supabase.from('batch_courses').select('*', { count: 'exact', head: true }).eq('batch_id', batchId),
     supabase.from('notifications').select('*', { count: 'exact', head: true }).eq('recipient_id', profileId).eq('is_read', false),
+    supabase.from('academic_years')
+      .select('id, name')
+      .eq('is_current', true)
+      .limit(1)
+      .maybeSingle(),
+    supabase.from('student_overall_gpa').select('overall_gpa').eq('student_id', studentId).maybeSingle(),
+    supabase.from('attendance_summary').select('total_sessions, attended_sessions').eq('student_id', studentId),
+    supabase.from('results').select('student_id', { count: 'exact', head: true }).eq('student_id', studentId),
+    supabase.from('settings').select('attendance_threshold').limit(1).maybeSingle(),
   ]);
 
-  // Published marks count
-  const { data: publishedMarks } = await supabase
-    .from('marks')
-    .select('id, grade, grade_point, mark_submissions:mark_submission_id (status)')
-    .eq('student_id', studentId);
+  const errors = [coursesRes, unreadNotifsRes, currentYearRes, overallGpaRes, attendanceRes, resultsRes, settingsRes]
+    .map((result) => result.error)
+    .filter(Boolean);
+  if (errors.length) throw errors[0];
 
-  const published = (publishedMarks || []).filter((m) => m.mark_submissions?.status === 'published');
-  const totalPublished = published.length;
-
-  // Compute GPA
-  let gpa = null;
-  if (published.length > 0) {
-    const totalPoints = published.reduce((sum, m) => sum + (m.grade_point || 0), 0);
-    gpa = (totalPoints / published.length).toFixed(2);
+  let currentSemester = null;
+  if (currentYearRes.data) {
+    const { data, error } = await supabase
+      .from('semesters')
+      .select('id, name, number')
+      .eq('academic_year_id', currentYearRes.data.id)
+      .eq('is_current', true)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) currentSemester = { ...data, academic_years: currentYearRes.data };
   }
 
-  // Attendance overall
-  const { data: sessions } = await supabase
-    .from('class_sessions')
-    .select('id');
-  const sessionIds = (sessions || []).map((s) => s.id);
+  const totalSessions = (attendanceRes.data || []).reduce((sum, row) => sum + Number(row.total_sessions || 0), 0);
+  const attendedSessions = (attendanceRes.data || []).reduce((sum, row) => sum + Number(row.attended_sessions || 0), 0);
+  const attendancePct = totalSessions > 0
+    ? Math.round((attendedSessions / totalSessions) * 100)
+    : null;
 
-  let attendancePct = null;
-  if (sessionIds.length > 0) {
-    const { data: myAttendance } = await supabase
-      .from('attendance')
-      .select('status')
+  let semesterGpa = null;
+  if (currentSemester) {
+    const { data, error } = await supabase
+      .from('student_semester_gpa')
+      .select('semester_gpa')
       .eq('student_id', studentId)
-      .in('session_id', sessionIds.slice(0, 500));
-
-    const total = myAttendance?.length || 0;
-    const present = (myAttendance || []).filter((a) => a.status === 'present' || a.status === 'late').length;
-    attendancePct = total > 0 ? Math.round((present / total) * 100) : null;
+      .eq('semester_id', currentSemester.id)
+      .maybeSingle();
+    if (error) throw error;
+    semesterGpa = data?.semester_gpa ?? null;
   }
+
+  const gpaValue = semesterGpa ?? overallGpaRes.data?.overall_gpa ?? null;
 
   return {
     totalCourses: coursesRes.count ?? 0,
-    publishedResults: totalPublished,
-    gpa,
+    publishedResults: resultsRes.count ?? 0,
+    gpa: gpaValue === null ? null : Number(gpaValue).toFixed(2),
+    gpaScope: semesterGpa !== null ? 'Current Semester GPA' : 'Cumulative GPA',
+    currentSemester,
     attendancePct,
+    attendanceThreshold: Number(settingsRes.data?.attendance_threshold ?? 75),
     unreadNotifications: unreadNotifsRes.count ?? 0,
   };
 }

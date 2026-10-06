@@ -179,3 +179,64 @@ export async function getRecentAuditLogs(limit = 10) {
 
   return data || [];
 }
+
+export async function getAdminNotifications({ limit = 100 } = {}) {
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return data || [];
+}
+
+export async function markAdminNotificationRead(notificationId) {
+  const { data, error } = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('id', notificationId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function markAllAdminNotificationsRead() {
+  const { error } = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('is_read', false);
+  if (error) throw error;
+}
+
+export async function getAdminResources() {
+  const { data, error } = await supabase
+    .from('resources')
+    .select(`
+      id,
+      title,
+      description,
+      course_id,
+      batch_id,
+      file_path,
+      file_name,
+      mime_type,
+      created_at,
+      courses:course_id (id, code, name),
+      batches:batch_id (id, name, code)
+    `)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getAdminResourceDownload(filePath) {
+  const { data, error } = await supabase.storage.from('resources').createSignedUrl(filePath, 60);
+  if (error) throw error;
+  if (!data?.signedUrl) {
+    throw new Error('No signed URL returned for this resource.');
+  }
+  return { url: data.signedUrl, error: null };
+}

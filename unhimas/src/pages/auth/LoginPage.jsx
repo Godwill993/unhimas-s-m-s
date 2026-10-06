@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { MdVisibility, MdVisibilityOff, MdErrorOutline, MdWarning, MdOpenInNew } from 'react-icons/md';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { useAuth } from '../../context/AuthContext';
 import logo from '../../assets/unhimas_logo.jpg';
 import '../../styles/components.css';
 
@@ -13,11 +14,19 @@ const schema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
+const ROLE_HOME = {
+  admin: '/admin',
+  frontdesk: '/frontdesk',
+  lecturer: '/lecturer',
+  student: '/student',
+};
+
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState('');
   const navigate = useNavigate();
+  const { refetchProfile } = useAuth();
 
   const { register, handleSubmit, formState: { errors } } = useForm({
     resolver: zodResolver(schema),
@@ -44,7 +53,15 @@ export default function LoginPage() {
       return;
     }
 
-    navigate('/');
+    const profile = await refetchProfile();
+    if (!profile?.role || !profile.is_active) {
+      await supabase.auth.signOut();
+      setServerError('Your account role could not be verified or the account is inactive. Contact the administrator.');
+      setLoading(false);
+      return;
+    }
+
+    navigate(ROLE_HOME[profile.role] || '/unauthorized', { replace: true });
   };
 
   return (

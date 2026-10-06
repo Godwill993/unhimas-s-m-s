@@ -5,14 +5,18 @@ import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../hooks/useToast';
 import {
-  getMyNotifications,
-  markNotificationRead,
-  markAllNotificationsRead,
-} from '../../services/lecturerService';
+  getAdminNotifications,
+  markAdminNotificationRead,
+  markAllAdminNotificationsRead,
+} from '../../services/adminService';
 
 function fmtDate(iso) {
   return new Date(iso).toLocaleString('en-GB', {
-    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   });
 }
 
@@ -24,29 +28,26 @@ const TYPE_ICONS = {
   general: '🔔',
 };
 
-export default function LecturerNotificationsPage() {
+export default function AdminNotificationsPage() {
   const { profile } = useAuth();
   const qc = useQueryClient();
   const { showToast } = useToast();
   const [filter, setFilter] = useState('all');
 
-  const profileId = profile?.id;
-
   const { data: notifications = [], isLoading } = useQuery({
-    queryKey: ['my-notifications', profileId],
-    queryFn: () => getMyNotifications(profileId, { limit: 100 }),
-    enabled: !!profileId,
+    queryKey: ['admin-notifications'],
+    queryFn: () => getAdminNotifications({ limit: 100 }),
   });
 
   const readMutation = useMutation({
-    mutationFn: (id) => markNotificationRead(id),
-    onSuccess: () => qc.invalidateQueries(['my-notifications', profileId]),
+    mutationFn: (id) => markAdminNotificationRead(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-notifications'] }),
   });
 
   const readAllMutation = useMutation({
-    mutationFn: () => markAllNotificationsRead(profileId),
+    mutationFn: () => markAllAdminNotificationsRead(),
     onSuccess: () => {
-      qc.invalidateQueries(['my-notifications', profileId]);
+      qc.invalidateQueries({ queryKey: ['admin-notifications'] });
       showToast('All notifications marked as read', 'success');
     },
   });
@@ -61,7 +62,7 @@ export default function LecturerNotificationsPage() {
     <AppLayout pageTitle="Notifications">
       <div className="page-header">
         <div className="page-header-left">
-          <h1 className="page-title">Notifications</h1>
+          <h1 className="page-title">System Notifications</h1>
           <p className="page-subtitle">
             {unreadCount > 0 ? `${unreadCount} unread notification${unreadCount !== 1 ? 's' : ''}` : 'All caught up'}
           </p>
@@ -101,7 +102,7 @@ export default function LecturerNotificationsPage() {
           <div className="empty-state">
             <div className="empty-state-icon"><MdNotifications /></div>
             <div className="empty-state-title">{filter === 'unread' ? 'No unread notifications' : 'No notifications'}</div>
-            <p className="empty-state-text">You're all caught up!</p>
+            <p className="empty-state-text">You are all caught up.</p>
           </div>
         ) : (
           <div>

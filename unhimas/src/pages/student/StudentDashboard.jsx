@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   MdBook,
@@ -7,9 +7,9 @@ import {
   MdNotifications,
   MdCampaign,
   MdWarning,
-  MdCheckCircle,
   MdRefresh,
   MdTrendingUp,
+  MdSchedule,
 } from 'react-icons/md';
 import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
@@ -18,6 +18,7 @@ import {
   getStudentDashboardStats,
   getMyAnnouncements,
   getStudentNotifications,
+  getMyUpcomingSessions,
 } from '../../services/studentService';
 
 // ─── Stat Card ────────────────────────────────────────────────────────────────
@@ -57,6 +58,7 @@ function fmtDate(iso) {
 
 export default function StudentDashboard() {
   const { session, profile } = useAuth();
+  const queryClient = useQueryClient();
   const profileId = profile?.id;
 
   const {
@@ -74,27 +76,43 @@ export default function StudentDashboard() {
   const studentId = studentProfile?.id;
   const departmentId = studentProfile?.batches?.departments?.id;
 
-  const { data: stats = {}, isLoading: statsLoading, refetch: refetchStats } = useQuery({
+  const { data: stats, isLoading: statsLoading, error: statsError, refetch: refetchStats } = useQuery({
     queryKey: ['student-dashboard-stats', studentId, batchId, profileId],
     queryFn: () => getStudentDashboardStats(studentId, batchId, profileId),
     enabled: !!studentId && !!batchId && !!profileId,
   });
 
-  const { data: announcements = [], isLoading: annLoading } = useQuery({
+  const { data: announcements = [], isLoading: annLoading, error: announcementsError } = useQuery({
     queryKey: ['my-announcements', batchId, departmentId],
     queryFn: () => getMyAnnouncements(batchId, departmentId),
     enabled: !!batchId,
   });
 
-  const { data: notifications = [], isLoading: notifsLoading } = useQuery({
+  const { data: notifications = [], isLoading: notifsLoading, error: notificationsError } = useQuery({
     queryKey: ['student-notifications', profileId],
     queryFn: () => getStudentNotifications(profileId, { limit: 5 }),
     enabled: !!profileId,
   });
 
+  const { data: upcomingSessions = [], isLoading: sessionsLoading, error: sessionsError } = useQuery({
+    queryKey: ['student-upcoming-sessions', batchId],
+    queryFn: () => getMyUpcomingSessions(batchId),
+    enabled: !!batchId,
+  });
+
   const formattedDate = new Date().toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
+
+  const refreshDashboard = async () => {
+    await Promise.all([
+      refetchProfile(),
+      refetchStats(),
+      queryClient.invalidateQueries({ queryKey: ['my-announcements', batchId, departmentId] }),
+      queryClient.invalidateQueries({ queryKey: ['student-notifications', profileId] }),
+      queryClient.invalidateQueries({ queryKey: ['student-upcoming-sessions', batchId] }),
+    ]);
+  };
 
   if (stuLoading) {
     return (
@@ -115,8 +133,17 @@ export default function StudentDashboard() {
       <AppLayout pageTitle="Student Dashboard">
         <div className="empty-state">
           <div className="empty-state-icon"><MdWarning /></div>
-          <div className="empty-state-title">Profile Not Linked</div>
-          <p className="empty-state-text">Your account is not yet linked to a student profile. Please contact the Front Desk or administrator.</p>
+          <div className="empty-state-title">{stuError.code === 'PGRST116' ? 'Profile Not Linked' : 'Profile Unavailable'}</div>
+          <p className="empty-state-text">
+            {stuError.code === 'PGRST116'
+              ? 'Your account is not yet linked to a student profile. Please contact the Front Desk or administrator.'
+              : 'Your student profile could not be loaded. Check your connection and try again.'}
+          </p>
+          {stuError.code !== 'PGRST116' && (
+            <button className="btn btn-outline btn-sm" onClick={() => refetchProfile()}>
+              <MdRefresh /> Try again
+            </button>
+          )}
         </div>
       </AppLayout>
     );
@@ -126,7 +153,8 @@ export default function StudentDashboard() {
   const dept = studentProfile?.batches?.departments?.name || '';
   const batchName = studentProfile?.batches?.name || '';
 
-  const lowAttendance = stats.attendancePct !== null && stats.attendancePct < 75;
+  const attendanceThreshold = stats?.attendanceThreshold ?? 75;
+  const lowAttendance = stats?.attendancePct != null && stats.attendancePct < attendanceThreshold;
 
   return (
     <AppLayout pageTitle="Student Dashboard">
@@ -138,7 +166,7 @@ export default function StudentDashboard() {
         <div className="page-header-actions">
           <button
             className="btn btn-outline btn-sm"
-            onClick={() => { refetchProfile(); refetchStats(); }}
+            onClick={refreshDashboard}
             aria-label="Refresh"
           >
             <MdRefresh /> Refresh
@@ -198,7 +226,7 @@ export default function StudentDashboard() {
           }}
         >
           <MdWarning size={20} />
-          Your overall attendance is below 75% ({stats.attendancePct}%). Please attend more classes.
+          Your overall attendance is below {attendanceThreshold}% ({stats.attendancePct}%). Please attend more classes.
           <Link to="/student/attendance" style={{ marginLeft: 'auto', color: 'var(--color-secondary)', fontWeight: 700, fontSize: '0.8125rem' }}>
             View →
           </Link>
@@ -209,26 +237,40 @@ export default function StudentDashboard() {
       <div className="stats-grid">
         {statsLoading ? (
           [1, 2, 3, 4, 5].map((i) => <StatSkeleton key={i} />)
+        ) : statsError ? (
+          <div className="empty-state" role="alert" style={{ gridColumn: '1 / -1' }}>
+            <div className="empty-state-icon"><MdWarning /></div>
+            <div className="empty-state-title">Academic summary unavailable</div>
+            <p className="empty-state-text">Your metrics could not be retrieved. No estimated results or GPA are shown.</p>
+            <button className="btn btn-outline btn-sm" onClick={() => refetchStats()}>
+              <MdRefresh /> Try again
+            </button>
+          </div>
         ) : (
           <>
             <StatCard icon={<MdBook />} value={stats.totalCourses} label="My Courses" color="blue" link="/student/courses" />
             <StatCard icon={<MdHowToReg />} value={stats.attendancePct !== null ? stats.attendancePct : '—'} label="Attendance Rate" color={lowAttendance ? 'red' : 'green'} link="/student/attendance" suffix="%" />
             <StatCard icon={<MdAssignment />} value={stats.publishedResults} label="Published Results" color="blue" link="/student/results" />
-            <StatCard icon={<MdTrendingUp />} value={stats.gpa !== null ? stats.gpa : '—'} label="Current GPA" color="amber" link="/student/results" />
+            <StatCard icon={<MdTrendingUp />} value={stats.gpa !== null ? stats.gpa : '—'} label={stats.gpaScope || 'GPA'} color="amber" link="/student/results" />
             <StatCard icon={<MdNotifications />} value={stats.unreadNotifications} label="Unread Notifications" color={stats.unreadNotifications > 0 ? 'red' : 'blue'} />
           </>
         )}
       </div>
 
+      {stats?.currentSemester && (
+        <p className="page-subtitle" style={{ margin: '-0.5rem 0 1.25rem' }}>
+          Current semester: {stats.currentSemester.name} · {stats.currentSemester.academic_years?.name}
+        </p>
+      )}
+
       {/* Announcements & Notifications grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+      <div className="student-dashboard-grid">
         {/* Announcements */}
         <div className="card">
           <div className="card-header">
             <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <MdCampaign color="var(--color-secondary)" /> Announcements
             </span>
-            <Link to="/student/announcements" className="btn btn-ghost btn-sm">View All</Link>
           </div>
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
             {annLoading ? (
@@ -239,6 +281,11 @@ export default function StudentDashboard() {
                     <div className="skeleton skeleton-text" style={{ width: '55%' }} />
                   </div>
                 ))}
+              </div>
+            ) : announcementsError ? (
+              <div className="empty-state" role="alert" style={{ padding: '2rem' }}>
+                <div className="empty-state-title">Announcements unavailable</div>
+                <p className="empty-state-text">Announcements could not be loaded.</p>
               </div>
             ) : announcements.length === 0 ? (
               <div className="empty-state" style={{ padding: '2rem' }}>
@@ -284,6 +331,11 @@ export default function StudentDashboard() {
                   </div>
                 ))}
               </div>
+            ) : notificationsError ? (
+              <div className="empty-state" role="alert" style={{ padding: '2rem' }}>
+                <div className="empty-state-title">Notifications unavailable</div>
+                <p className="empty-state-text">Your notifications could not be loaded.</p>
+              </div>
             ) : notifications.length === 0 ? (
               <div className="empty-state" style={{ padding: '2rem' }}>
                 <div className="empty-state-icon"><MdNotifications /></div>
@@ -316,6 +368,49 @@ export default function StudentDashboard() {
                 </div>
               ))
             )}
+          </div>
+        </div>
+
+        {/* Upcoming Classes */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <MdSchedule color="var(--color-primary)" /> Upcoming Classes
+            </span>
+          </div>
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {sessionsLoading ? (
+              <div style={{ padding: '1rem' }}>
+                {[1, 2].map((i) => <div key={i} className="skeleton skeleton-text" style={{ height: 32, marginBottom: 12 }} />)}
+              </div>
+            ) : sessionsError ? (
+              <div className="empty-state" role="alert" style={{ padding: '2rem' }}>
+                <div className="empty-state-title">Timetable unavailable</div>
+                <p className="empty-state-text">Upcoming classes could not be loaded.</p>
+              </div>
+            ) : upcomingSessions.length === 0 ? (
+              <div className="empty-state" style={{ padding: '2rem' }}>
+                <div className="empty-state-icon"><MdSchedule /></div>
+                <div className="empty-state-title">No upcoming classes</div>
+              </div>
+            ) : upcomingSessions.map((classSession) => (
+              <div key={classSession.id} style={{ padding: '0.875rem 1.25rem', borderBottom: '1px solid var(--color-border)' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.875rem' }}>
+                  {classSession.batch_courses?.courses?.code} — {classSession.batch_courses?.courses?.name}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: 3 }}>
+                  {new Date(classSession.scheduled_start).toLocaleString('en-GB', {
+                    weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+                  })}
+                  {classSession.room ? ` · ${classSession.room}` : ''}
+                </div>
+                {classSession.batch_courses?.lecturers && (
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                    {classSession.batch_courses.lecturers.first_name} {classSession.batch_courses.lecturers.last_name}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       </div>

@@ -4,13 +4,6 @@ import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import { getMyLecturerProfile, getMyShifts } from '../../services/lecturerService';
 
-function fmtDT(iso) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('en-GB', {
-    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
-}
-
 function calcDuration(clockIn, clockOut) {
   if (!clockIn || !clockOut) return '—';
   const hrs = (new Date(clockOut) - new Date(clockIn)) / 3600000;

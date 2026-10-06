@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { MdAccountCircle, MdEmail, MdPhone, MdSchool, MdWork } from 'react-icons/md';
+import { MdAccountCircle, MdEmail, MdPhone } from 'react-icons/md';
 import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import { getMyLecturerProfile } from '../../services/lecturerService';

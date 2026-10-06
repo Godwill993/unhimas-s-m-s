@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { MdAdd, MdSchool, MdSearch, MdEdit, MdToggleOn, MdToggleOff, MdPhone, MdEmail } from 'react-icons/md';
+import { MdAdd, MdSchool, MdSearch, MdEdit, MdToggleOn, MdToggleOff, MdPhone, MdEmail, MdPersonAdd } from 'react-icons/md';
 import AppLayout from '../../components/layout/AppLayout';
 import Modal from '../../components/common/Modal';
 import { toast } from '../../components/common/Toast';
@@ -9,7 +9,8 @@ import {
   createStudent,
   updateStudent,
 } from '../../services/peopleService';
-import { getBatches, getDepartments } from '../../services/academicService';
+import { getBatches } from '../../services/academicService';
+import { provisionSchoolAccount } from '../../services/auth';
 
 export default function StudentsPage() {
   const queryClient = useQueryClient();
@@ -62,6 +63,15 @@ export default function StudentsPage() {
     onError: (err) => {
       toast.error(err.message || 'Failed to update student');
     },
+  });
+
+  const inviteMutation = useMutation({
+    mutationFn: (studentId) => provisionSchoolAccount({ recordType: 'student', recordId: studentId }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-students'] });
+      toast.success(result.message || 'Student invitation sent');
+    },
+    onError: (err) => toast.error(err.message || 'Could not send student invitation'),
   });
 
   const handleOpenAdd = () => {
@@ -260,9 +270,19 @@ export default function StudentsPage() {
                         <button
                           className="btn-icon"
                           title="Edit student"
+                          aria-label={`Edit student ${stu.matricule}`}
                           onClick={() => handleOpenEdit(stu)}
                         >
                           <MdEdit />
+                        </button>
+                        <button
+                          className="btn-icon"
+                          title={stu.profile_id ? 'Student already has a login account' : !stu.email ? 'Add an email before sending an invitation' : 'Send login invitation'}
+                          aria-label={`Send login invitation to ${stu.matricule}`}
+                          disabled={inviteMutation.isPending || !stu.is_active || Boolean(stu.profile_id) || !stu.email}
+                          onClick={() => inviteMutation.mutate(stu.id)}
+                        >
+                          <MdPersonAdd />
                         </button>
                         <button
                           className="btn-icon"

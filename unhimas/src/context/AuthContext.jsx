@@ -7,21 +7,47 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [profileError, setProfileError] = useState(null);
 
   const fetchProfile = async (userId) => {
+    setProfile(null);
+    setProfileError(null);
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', userId)
       .single();
-    if (!error) setProfile(data);
+    if (error) {
+      setProfileError(error);
+      return null;
+    }
+    setProfile(data);
+    return data;
+  };
+
+  const refetchProfile = async () => {
+    setLoading(true);
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) {
+      setProfile(null);
+      setProfileError(error || new Error('No authenticated user'));
+      setLoading(false);
+      return null;
+    }
+
+    try {
+      return await fetchProfile(user.id);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
       if (session?.user) {
-        fetchProfile(session.user.id).finally(() => setLoading(false));
+        await fetchProfile(session.user.id);
+        setLoading(false);
       } else {
         setLoading(false);
       }
@@ -30,9 +56,12 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session?.user) {
-        fetchProfile(session.user.id);
+        setLoading(true);
+        Promise.resolve().then(() => fetchProfile(session.user.id)).finally(() => setLoading(false));
       } else {
         setProfile(null);
+        setProfileError(null);
+        setLoading(false);
       }
     });
 
@@ -46,7 +75,14 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading, signOut, refetchProfile: () => session && fetchProfile(session.user.id) }}>
+    <AuthContext.Provider value={{
+      session,
+      profile,
+      loading,
+      profileError,
+      signOut,
+      refetchProfile,
+    }}>
       {children}
     </AuthContext.Provider>
   );

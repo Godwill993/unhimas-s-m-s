@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   MdBook,
@@ -82,12 +82,14 @@ function StatSkeleton() {
 
 export default function LecturerDashboard() {
   const { session, profile } = useAuth();
+  const queryClient = useQueryClient();
 
   // Step 1: get my lecturer record
   const {
     data: lecturerProfile,
     isLoading: lecLoading,
     error: lecError,
+    refetch: refetchLecturerProfile,
   } = useQuery({
     queryKey: ['my-lecturer-profile'],
     queryFn: getMyLecturerProfile,
@@ -98,35 +100,35 @@ export default function LecturerDashboard() {
   const profileId = profile?.id;
 
   // Step 2: Dashboard stats
-  const { data: stats = {}, isLoading: statsLoading, refetch: refetchStats } = useQuery({
+  const { data: stats, isLoading: statsLoading, error: statsError, refetch: refetchStats } = useQuery({
     queryKey: ['lecturer-dashboard-stats', lecturerId, profileId],
     queryFn: () => getLecturerDashboardStats(lecturerId, profileId),
     enabled: !!lecturerId && !!profileId,
   });
 
   // Step 3: Today's sessions
-  const { data: todaySessions = [], isLoading: sessionsLoading } = useQuery({
+  const { data: todaySessions = [], isLoading: sessionsLoading, error: sessionsError } = useQuery({
     queryKey: ['lecturer-today-sessions', lecturerId],
     queryFn: () => getTodaySessions(lecturerId),
     enabled: !!lecturerId,
   });
 
   // Step 4: Upcoming sessions
-  const { data: upcomingSessions = [] } = useQuery({
+  const { data: upcomingSessions = [], isLoading: upcomingLoading, error: upcomingError } = useQuery({
     queryKey: ['lecturer-upcoming-sessions', lecturerId],
     queryFn: () => getUpcomingSessions(lecturerId),
     enabled: !!lecturerId,
   });
 
   // Step 5: My mark submissions
-  const { data: markSubmissions = [], isLoading: marksLoading } = useQuery({
+  const { data: markSubmissions = [], isLoading: marksLoading, error: marksError } = useQuery({
     queryKey: ['my-mark-submissions', lecturerId],
     queryFn: () => getMyMarkSubmissions(lecturerId),
     enabled: !!lecturerId,
   });
 
   // Step 6: Notifications
-  const { data: notifications = [], isLoading: notifsLoading } = useQuery({
+  const { data: notifications = [], isLoading: notifsLoading, error: notificationsError } = useQuery({
     queryKey: ['my-notifications', profileId],
     queryFn: () => getMyNotifications(profileId, { limit: 5 }),
     enabled: !!profileId,
@@ -135,6 +137,17 @@ export default function LecturerDashboard() {
   const formattedDate = new Date().toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
+
+  const refreshDashboard = async () => {
+    await Promise.all([
+      refetchLecturerProfile(),
+      refetchStats(),
+      queryClient.invalidateQueries({ queryKey: ['lecturer-today-sessions', lecturerId] }),
+      queryClient.invalidateQueries({ queryKey: ['lecturer-upcoming-sessions', lecturerId] }),
+      queryClient.invalidateQueries({ queryKey: ['my-mark-submissions', lecturerId] }),
+      queryClient.invalidateQueries({ queryKey: ['my-notifications', profileId] }),
+    ]);
+  };
 
   if (lecLoading) {
     return (
@@ -159,8 +172,15 @@ export default function LecturerDashboard() {
           <div className="empty-state-icon"><MdWarning /></div>
           <div className="empty-state-title">Profile Not Linked</div>
           <p className="empty-state-text">
-            Your account is not yet linked to a lecturer profile. Please contact the administrator.
+            {lecError.code === 'PGRST116'
+              ? 'Your account is not yet linked to a lecturer profile. Please contact the administrator.'
+              : 'Your lecturer profile could not be loaded. Check your connection and try again.'}
           </p>
+          {lecError.code !== 'PGRST116' && (
+            <button className="btn btn-outline btn-sm" onClick={() => refetchLecturerProfile()}>
+              <MdRefresh /> Try again
+            </button>
+          )}
         </div>
       </AppLayout>
     );
@@ -168,10 +188,6 @@ export default function LecturerDashboard() {
 
   const firstName = lecturerProfile?.first_name || 'Lecturer';
   const dept = lecturerProfile?.departments?.name || '';
-
-  const pendingOrReturned = markSubmissions.filter(
-    (m) => m.status === 'draft' || m.status === 'returned'
-  );
 
   const returnedSubmissions = markSubmissions.filter((m) => m.status === 'returned');
 
@@ -189,13 +205,23 @@ export default function LecturerDashboard() {
         <div className="page-header-actions">
           <button
             className="btn btn-outline btn-sm"
-            onClick={() => refetchStats()}
+            onClick={refreshDashboard}
             aria-label="Refresh dashboard"
           >
             <MdRefresh /> Refresh
           </button>
         </div>
       </div>
+
+      {(statsError || sessionsError || upcomingError || marksError || notificationsError) && (
+        <div className="auth-alert error" role="alert" style={{ marginBottom: '1.25rem' }}>
+          <MdWarning aria-hidden="true" />
+          Some dashboard information could not be loaded. Refresh to try again; access remains subject to your account permissions.
+          <button className="btn btn-outline btn-sm" onClick={refreshDashboard} style={{ marginLeft: 'auto' }}>
+            <MdRefresh /> Refresh
+          </button>
+        </div>
+      )}
 
       {/* Current shift banner */}
       {stats.currentShift && (
@@ -248,6 +274,12 @@ export default function LecturerDashboard() {
       <div className="stats-grid">
         {statsLoading ? (
           [1, 2, 3, 4, 5, 6].map((i) => <StatSkeleton key={i} />)
+        ) : statsError ? (
+          <div className="empty-state" role="status" style={{ gridColumn: '1 / -1' }}>
+            <div className="empty-state-icon"><MdWarning /></div>
+            <div className="empty-state-title">Dashboard metrics unavailable</div>
+            <p className="empty-state-text">The metrics could not be retrieved. No placeholder totals are shown.</p>
+          </div>
         ) : (
           <>
             <StatCard icon={<MdBook />} value={stats.totalCourses} label="Assigned Courses" color="blue" link="/lecturer/courses" />
@@ -261,7 +293,7 @@ export default function LecturerDashboard() {
       </div>
 
       {/* Main grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+      <div className="lecturer-dashboard-grid">
         {/* Today's Sessions */}
         <div className="card">
           <div className="card-header">
@@ -279,6 +311,12 @@ export default function LecturerDashboard() {
                     <div className="skeleton skeleton-text" style={{ width: '40%' }} />
                   </div>
                 ))}
+              </div>
+            ) : sessionsError ? (
+              <div className="empty-state" role="alert" style={{ padding: '2rem' }}>
+                <div className="empty-state-icon"><MdWarning /></div>
+                <div className="empty-state-title">Sessions unavailable</div>
+                <p className="empty-state-text">Today's sessions could not be loaded.</p>
               </div>
             ) : todaySessions.length === 0 ? (
               <div className="empty-state" style={{ padding: '2rem' }}>
@@ -322,7 +360,7 @@ export default function LecturerDashboard() {
                       </div>
                       {s.room && <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Room: {s.room}</div>}
                     </div>
-                    <Link to={`/lecturer/sessions`} className="btn btn-ghost btn-sm">
+                    <Link to={`/lecturer/sessions?bc=${s.batch_courses?.id}&session=${s.id}`} className="btn btn-ghost btn-sm">
                       <MdHowToReg /> Attend
                     </Link>
                   </div>
@@ -349,6 +387,12 @@ export default function LecturerDashboard() {
                     <div className="skeleton skeleton-text" style={{ width: '50%' }} />
                   </div>
                 ))}
+              </div>
+            ) : marksError ? (
+              <div className="empty-state" role="alert" style={{ padding: '2rem' }}>
+                <div className="empty-state-icon"><MdWarning /></div>
+                <div className="empty-state-title">Marks unavailable</div>
+                <p className="empty-state-text">Your mark submissions could not be loaded.</p>
               </div>
             ) : markSubmissions.length === 0 ? (
               <div className="empty-state" style={{ padding: '2rem' }}>
@@ -384,7 +428,9 @@ export default function LecturerDashboard() {
                         </div>
                       )}
                     </div>
-                    {statusBadge(m.status)}
+                    <Link to={`/lecturer/marks?bc=${m.batch_courses?.id}`} aria-label={`Open marks for ${m.batch_courses?.courses?.code || 'course'}`}>
+                      {statusBadge(m.status)}
+                    </Link>
                   </div>
                 ))}
               </div>
@@ -400,7 +446,16 @@ export default function LecturerDashboard() {
             </span>
           </div>
           <div className="card-body" style={{ padding: 0 }}>
-            {upcomingSessions.length === 0 ? (
+            {upcomingLoading ? (
+              <div style={{ padding: '1rem' }}>
+                {[1, 2].map((i) => <div key={i} className="skeleton skeleton-text" style={{ marginBottom: 12, height: 32 }} />)}
+              </div>
+            ) : upcomingError ? (
+              <div className="empty-state" role="alert" style={{ padding: '1.5rem' }}>
+                <div className="empty-state-title">Upcoming classes unavailable</div>
+                <p className="empty-state-text">The schedule could not be loaded.</p>
+              </div>
+            ) : upcomingSessions.length === 0 ? (
               <div className="empty-state" style={{ padding: '1.5rem' }}>
                 <div className="empty-state-title">No upcoming classes in next 7 days</div>
               </div>
@@ -465,6 +520,12 @@ export default function LecturerDashboard() {
                     <div className="skeleton skeleton-text" style={{ width: '55%' }} />
                   </div>
                 ))}
+              </div>
+            ) : notificationsError ? (
+              <div className="empty-state" role="alert" style={{ padding: '2rem' }}>
+                <div className="empty-state-icon"><MdWarning /></div>
+                <div className="empty-state-title">Notifications unavailable</div>
+                <p className="empty-state-text">Your notifications could not be loaded.</p>
               </div>
             ) : notifications.length === 0 ? (
               <div className="empty-state" style={{ padding: '2rem' }}>

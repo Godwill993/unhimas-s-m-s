@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react';
+import { Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -27,6 +27,8 @@ import AdminAttendancePage from './pages/admin/AdminAttendancePage';
 import AdminResultsPage from './pages/admin/AdminResultsPage';
 import AdminTimetablePage from './pages/admin/AdminTimetablePage';
 import AdminAnnouncementsPage from './pages/admin/AdminAnnouncementsPage';
+import AdminNotificationsPage from './pages/admin/AdminNotificationsPage';
+import AdminResourcesPage from './pages/admin/AdminResourcesPage';
 import SettingsPage from './pages/admin/SettingsPage';
 import AuditLogPage from './pages/admin/AuditLogPage';
 import AdminProfilePage from './pages/admin/AdminProfilePage';
@@ -37,7 +39,22 @@ import LecturerAttendancePage from './pages/frontdesk/LecturerAttendancePage';
 import ShiftHistoryPage from './pages/frontdesk/ShiftHistoryPage';
 import FrontDeskProfilePage from './pages/frontdesk/FrontDeskProfilePage';
 import LecturerDashboard from './pages/lecturer/LecturerDashboard';
+import LecturerCoursesPage from './pages/lecturer/LecturerCoursesPage';
+import LecturerSessionsPage from './pages/lecturer/LecturerSessionsPage';
+import LecturerMarksPage from './pages/lecturer/LecturerMarksPage';
+import LecturerHoursPage from './pages/lecturer/LecturerHoursPage';
+import LecturerNotificationsPage from './pages/lecturer/LecturerNotificationsPage';
+import LecturerResourcesPage from './pages/lecturer/LecturerResourcesPage';
+import LecturerProfilePage from './pages/lecturer/LecturerProfilePage';
 import StudentDashboard from './pages/student/StudentDashboard';
+import StudentCoursesPage from './pages/student/StudentCoursesPage';
+import StudentAttendancePage from './pages/student/StudentAttendancePage';
+import StudentResultsPage from './pages/student/StudentResultsPage';
+import StudentTimetablePage from './pages/student/StudentTimetablePage';
+import StudentAnnouncementsPage from './pages/student/StudentAnnouncementsPage';
+import StudentNotificationsPage from './pages/student/StudentNotificationsPage';
+import StudentResourcesPage from './pages/student/StudentResourcesPage';
+import StudentProfilePage from './pages/student/StudentProfilePage';
 
 import './index.css';
 
@@ -55,7 +72,7 @@ const queryClient = new QueryClient({
  * Unauthenticated users go to /login.
  */
 function RoleRouter() {
-  const { session, profile, loading } = useAuth();
+  const { session, profile, loading, profileError, signOut } = useAuth();
 
   if (loading) {
     return (
@@ -67,12 +84,24 @@ function RoleRouter() {
 
   if (!session) return <Navigate to="/login" replace />;
 
+  if (profileError || !profile) {
+    return (
+      <div className="unauthorized-page">
+        <div role="alert">
+          <h1>Account profile unavailable</h1>
+          <p>Your role could not be verified. For your security, access is paused. Contact the administrator.</p>
+          <button className="btn btn-primary" onClick={signOut}>Sign out</button>
+        </div>
+      </div>
+    );
+  }
+
   switch (profile?.role) {
     case 'admin':     return <Navigate to="/admin" replace />;
     case 'frontdesk': return <Navigate to="/frontdesk" replace />;
     case 'lecturer':  return <Navigate to="/lecturer" replace />;
     case 'student':   return <Navigate to="/student" replace />;
-    default:          return <Navigate to="/student" replace />;
+    default:          return <Navigate to="/unauthorized" replace />;
   }
 }
 
@@ -114,6 +143,8 @@ function App() {
                       <Route path="results" element={<AdminResultsPage />} />
                       <Route path="timetable" element={<AdminTimetablePage />} />
                       <Route path="announcements" element={<AdminAnnouncementsPage />} />
+                      <Route path="notifications" element={<AdminNotificationsPage />} />
+                      <Route path="resources" element={<AdminResourcesPage />} />
                       <Route path="settings" element={<SettingsPage />} />
                       <Route path="audit-log" element={<AuditLogPage />} />
                       <Route path="profile" element={<AdminProfilePage />} />
@@ -144,6 +175,14 @@ function App() {
                   <ProtectedRoute roles={['lecturer']}>
                     <Routes>
                       <Route index element={<LecturerDashboard />} />
+                      <Route path="courses" element={<LecturerCoursesPage />} />
+                      <Route path="sessions" element={<LecturerSessionsPage />} />
+                      <Route path="attendance" element={<LecturerSessionsPage />} />
+                      <Route path="marks" element={<LecturerMarksPage />} />
+                      <Route path="hours" element={<LecturerHoursPage />} />
+                      <Route path="notifications" element={<LecturerNotificationsPage />} />
+                      <Route path="resources" element={<LecturerResourcesPage />} />
+                      <Route path="profile" element={<LecturerProfilePage />} />
                     </Routes>
                   </ProtectedRoute>
                 }
@@ -156,6 +195,14 @@ function App() {
                   <ProtectedRoute roles={['student']}>
                     <Routes>
                       <Route index element={<StudentDashboard />} />
+                      <Route path="courses" element={<StudentCoursesPage />} />
+                      <Route path="attendance" element={<StudentAttendancePage />} />
+                      <Route path="results" element={<StudentResultsPage />} />
+                      <Route path="timetable" element={<StudentTimetablePage />} />
+                      <Route path="announcements" element={<StudentAnnouncementsPage />} />
+                      <Route path="notifications" element={<StudentNotificationsPage />} />
+                      <Route path="resources" element={<StudentResourcesPage />} />
+                      <Route path="profile" element={<StudentProfilePage />} />
                     </Routes>
                   </ProtectedRoute>
                 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { MdAssignment, MdLock, MdWarning } from 'react-icons/md';
+import { MdLock, MdWarning } from 'react-icons/md';
 import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import { getMyStudentProfile, getMyResults } from '../../services/studentService';

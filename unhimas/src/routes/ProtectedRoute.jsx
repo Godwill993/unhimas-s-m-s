@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
  * roles: e.g. ['admin', 'frontdesk']
  */
 export default function ProtectedRoute({ children, roles }) {
-  const { session, profile, loading } = useAuth();
+  const { session, profile, loading, profileError } = useAuth();
 
   if (loading) {
     return (
@@ -20,7 +20,11 @@ export default function ProtectedRoute({ children, roles }) {
     return <Navigate to="/login" replace />;
   }
 
-  if (roles && profile && !roles.includes(profile.role)) {
+  if (profileError || !profile || !profile.is_active) {
+    return <Navigate to="/unauthorized" replace />;
+  }
+
+  if (roles && !roles.includes(profile.role)) {
     return <Navigate to="/unauthorized" replace />;
   }
 

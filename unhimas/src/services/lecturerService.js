@@ -77,6 +77,7 @@ export async function getUpcomingSessions(lecturerId) {
     .select(`
       *,
       batch_courses:batch_course_id (
+        id,
         courses:course_id (code, name),
         batches:batch_id (name, code)
       )
@@ -206,11 +207,12 @@ export async function resubmitMarkSubmission(submissionId) {
 // CLASS SESSIONS
 // ============================================================
 
-export async function getSessionsForBatchCourse(batchCourseId) {
+export async function getSessionsForBatchCourse(batchCourseId, lecturerId) {
   const { data, error } = await supabase
     .from('class_sessions')
     .select('*')
     .eq('batch_course_id', batchCourseId)
+    .eq('lecturer_id', lecturerId)
     .order('scheduled_start', { ascending: false });
   if (error) throw error;
   return data || [];
@@ -303,6 +305,38 @@ export async function getMyNotifications(profileId, { limit = 30 } = {}) {
   return data || [];
 }
 
+export async function getLecturerResources(lecturerId) {
+  const { data, error } = await supabase
+    .from('resources')
+    .select(`
+      id,
+      title,
+      description,
+      course_id,
+      batch_id,
+      file_path,
+      file_name,
+      mime_type,
+      created_at,
+      courses:course_id (id, code, name),
+      batches:batch_id (id, name, code)
+    `)
+    .in('course_id', (await supabase.from('batch_courses').select('course_id').eq('lecturer_id', lecturerId)).data?.map((item) => item.course_id) || [])
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getLecturerResourceDownload(filePath) {
+  const { data, error } = await supabase.storage.from('resources').createSignedUrl(filePath, 60);
+  if (error) throw error;
+  if (!data?.signedUrl) {
+    throw new Error('No signed URL returned for this resource.');
+  }
+  return { url: data.signedUrl, error: null };
+}
+
 export async function markNotificationRead(notificationId) {
   const { data, error } = await supabase
     .from('notifications')
@@ -333,33 +367,33 @@ export async function getLecturerDashboardStats(lecturerId, profileId) {
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const [coursesRes, todaySessionsRes, pendingMarksRes, returnedMarksRes, unreadNotifsRes] = await Promise.all([
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
+  const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1).toISOString();
+
+  const [coursesRes, todaySessionsRes, pendingMarksRes, returnedMarksRes, unreadNotifsRes, monthlyHoursRes] = await Promise.all([
     supabase.from('batch_courses').select('*', { count: 'exact', head: true }).eq('lecturer_id', lecturerId),
     supabase.from('class_sessions').select('*', { count: 'exact', head: true }).eq('lecturer_id', lecturerId).gte('scheduled_start', today.toISOString()).lt('scheduled_start', tomorrow.toISOString()),
     supabase.from('mark_submissions').select('*', { count: 'exact', head: true }).eq('lecturer_id', lecturerId).eq('status', 'draft'),
     supabase.from('mark_submissions').select('*', { count: 'exact', head: true }).eq('lecturer_id', lecturerId).eq('status', 'returned'),
     supabase.from('notifications').select('*', { count: 'exact', head: true }).eq('recipient_id', profileId).eq('is_read', false),
+    supabase.from('lecturer_hours_monthly').select('month, hours_taught').eq('lecturer_id', lecturerId).gte('month', monthStart).lt('month', nextMonthStart),
   ]);
 
-  const { data: openShiftData } = await supabase
+  const queryErrors = [coursesRes, todaySessionsRes, pendingMarksRes, returnedMarksRes, unreadNotifsRes, monthlyHoursRes]
+    .map((result) => result.error)
+    .filter(Boolean);
+  if (queryErrors.length) throw queryErrors[0];
+
+  const { data: openShiftData, error: openShiftError } = await supabase
     .from('lecturer_shifts')
     .select('id, clock_in, status')
     .eq('lecturer_id', lecturerId)
     .eq('status', 'open')
     .maybeSingle();
+  if (openShiftError) throw openShiftError;
 
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
-  const { data: shifts } = await supabase
-    .from('lecturer_shifts')
-    .select('clock_in, clock_out')
-    .eq('lecturer_id', lecturerId)
-    .gte('clock_in', monthStart)
-    .eq('status', 'closed');
-
-  let monthlyHours = 0;
-  (shifts || []).forEach((s) => {
-    if (s.clock_out) monthlyHours += (new Date(s.clock_out) - new Date(s.clock_in)) / 3600000;
-  });
+  const monthlyHours = (monthlyHoursRes.data || [])
+    .reduce((sum, row) => sum + Number(row.hours_taught || 0), 0);
 
   return {
     totalCourses: coursesRes.count ?? 0,

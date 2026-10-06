@@ -34,14 +34,14 @@ export default function StudentAttendancePage() {
 
   const { data: studentProfile } = useQuery({
     queryKey: ['my-student-profile'],
-    queryFn: () => import('../../services/studentService').then((m) => m.getMyStudentProfile()),
+    queryFn: getMyStudentProfile,
     enabled: !!session,
   });
 
   const studentId = studentProfile?.id;
   const batchId = studentProfile?.batch_id;
 
-  const { data: summary = [], isLoading } = useQuery({
+  const { data: summary = [], isLoading, error } = useQuery({
     queryKey: ['my-attendance-summary', studentId, batchId],
     queryFn: () => getMyAttendanceSummary(studentId, batchId),
     enabled: !!studentId && !!batchId,
@@ -106,6 +106,12 @@ export default function StudentAttendancePage() {
               <div className="skeleton skeleton-text" style={{ height: 6 }} />
             </div>
           ))}
+        </div>
+      ) : error ? (
+        <div className="empty-state" role="alert">
+          <div className="empty-state-icon"><MdWarning /></div>
+          <div className="empty-state-title">Attendance unavailable</div>
+          <p className="empty-state-text">Your attendance records could not be loaded. Please try again later.</p>
         </div>
       ) : summary.length === 0 ? (
         <div className="empty-state">
