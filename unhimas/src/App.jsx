@@ -29,6 +29,10 @@ import AdminTimetablePage from './pages/admin/AdminTimetablePage';
 import AdminAnnouncementsPage from './pages/admin/AdminAnnouncementsPage';
 import AdminNotificationsPage from './pages/admin/AdminNotificationsPage';
 import AdminResourcesPage from './pages/admin/AdminResourcesPage';
+import LecturerHoursReportPage from './pages/admin/reports/LecturerHoursReportPage';
+import AttendanceReportPage from './pages/admin/reports/AttendanceReportPage';
+import CoursePerformanceReportPage from './pages/admin/reports/CoursePerformanceReportPage';
+import ResultsReportPage from './pages/admin/reports/ResultsReportPage';
 import SettingsPage from './pages/admin/SettingsPage';
 import AuditLogPage from './pages/admin/AuditLogPage';
 import AdminProfilePage from './pages/admin/AdminProfilePage';
@@ -145,6 +149,10 @@ function App() {
                       <Route path="announcements" element={<AdminAnnouncementsPage />} />
                       <Route path="notifications" element={<AdminNotificationsPage />} />
                       <Route path="resources" element={<AdminResourcesPage />} />
+                      <Route path="reports/lecturer-hours" element={<LecturerHoursReportPage />} />
+                      <Route path="reports/attendance" element={<AttendanceReportPage />} />
+                      <Route path="reports/performance" element={<CoursePerformanceReportPage />} />
+                      <Route path="reports/results" element={<ResultsReportPage />} />
                       <Route path="settings" element={<SettingsPage />} />
                       <Route path="audit-log" element={<AuditLogPage />} />
                       <Route path="profile" element={<AdminProfilePage />} />

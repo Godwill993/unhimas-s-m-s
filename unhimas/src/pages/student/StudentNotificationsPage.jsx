@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { MdNotifications, MdDoneAll, MdMarkEmailRead } from 'react-icons/md';
 import AppLayout from '../../components/layout/AppLayout';
+import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../hooks/useToast';
 import {
-  getAdminNotifications,
-  markAdminNotificationRead,
-  markAllAdminNotificationsRead,
-} from '../../services/adminService';
+  getStudentNotifications,
+  markStudentNotificationRead,
+  markAllStudentNotificationsRead,
+} from '../../services/studentService';
 
 function fmtDate(iso) {
   return new Date(iso).toLocaleString('en-GB', {
@@ -27,25 +28,29 @@ const TYPE_ICONS = {
   general: '🔔',
 };
 
-export default function AdminNotificationsPage() {
+export default function StudentNotificationsPage() {
+  const { profile } = useAuth();
   const qc = useQueryClient();
   const { showToast } = useToast();
   const [filter, setFilter] = useState('all');
 
+  const profileId = profile?.id;
+
   const { data: notifications = [], isLoading } = useQuery({
-    queryKey: ['admin-notifications'],
-    queryFn: () => getAdminNotifications({ limit: 100 }),
+    queryKey: ['student-notifications', profileId],
+    queryFn: () => getStudentNotifications(profileId, { limit: 100 }),
+    enabled: !!profileId,
   });
 
   const readMutation = useMutation({
-    mutationFn: (id) => markAdminNotificationRead(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-notifications'] }),
+    mutationFn: (id) => markStudentNotificationRead(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['student-notifications', profileId] }),
   });
 
   const readAllMutation = useMutation({
-    mutationFn: () => markAllAdminNotificationsRead(),
+    mutationFn: () => markAllStudentNotificationsRead(profileId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin-notifications'] });
+      qc.invalidateQueries({ queryKey: ['student-notifications', profileId] });
       showToast('All notifications marked as read', 'success');
     },
   });
@@ -60,7 +65,7 @@ export default function AdminNotificationsPage() {
     <AppLayout pageTitle="Notifications">
       <div className="page-header">
         <div className="page-header-left">
-          <h1 className="page-title">System Notifications</h1>
+          <h1 className="page-title">Notifications</h1>
           <p className="page-subtitle">
             {unreadCount > 0 ? `${unreadCount} unread notification${unreadCount !== 1 ? 's' : ''}` : 'All caught up'}
           </p>
